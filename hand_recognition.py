@@ -2,6 +2,7 @@ import cv2
 import mediapipe as mp
 import time
 import math as math
+import numpy as np
 
 
 class HandTrackingDynamic:
@@ -44,12 +45,20 @@ class HandTrackingDynamic:
 
             xmin, xmax = min(xList), max(xList)
             ymin, ymax = min(yList), max(yList)
-            bbox = xmin, ymin, xmax, ymax
-            print( "Hands Keypoint")
-            print(bbox)
+            bbox = (xmin, ymin, xmax, ymax)
+            landmark_names = [
+            "Wrist", "Thumb CMC", "Thumb MCP", "Thumb IP", "Thumb Tip",
+            "Index MCP", "Index PIP", "Index DIP", "Index Tip",
+            "Middle MCP", "Middle PIP", "Middle DIP", "Middle Tip",
+            "Ring MCP", "Ring PIP", "Ring DIP", "Ring Tip",
+            "Pinky MCP", "Pinky PIP", "Pinky DIP", "Pinky Tip"
+            ]
+
+            for pid, cx, cy in self.lmsList:
+                print(f"{landmark_names[pid]} (id={pid}): x={cx}, y={cy}")
             if draw:
                 cv2.rectangle(frame, (xmin - 20, ymin - 20),(xmax + 20, ymax + 20),
-                               (0, 255 , 0) , 2)
+                                (0, 255 , 0) , 2)
 
         return self.lmsList, bbox
     
@@ -69,27 +78,31 @@ class HandTrackingDynamic:
         
          return fingers
 
-    def findDistance(self, p1, p2, frame, draw= True, r=15, t=3):
-         
-        x1 , y1 = self.lmsList[p1][1:]
+    def findDistance(self, p1, p2, frame, draw=True, r=15, t=3):
+        # bail out if landmarks aren’t available this frame
+        if not getattr(self, "lmsList", None) or len(self.lmsList) <= max(p1, p2):
+            return None, frame, None
+
+        x1, y1 = self.lmsList[p1][1:]
         x2, y2 = self.lmsList[p2][1:]
-        cx , cy = (x1+x2)//2 , (y1 + y2)//2
+        cx, cy = (x1 + x2)//2, (y1 + y2)//2
 
         if draw:
-              cv2.line(frame,(x1, y1),(x2,y2) ,(255,0,255), t)
-              cv2.circle(frame,(x1,y1),r,(255,0,255),cv2.FILLED)
-              cv2.circle(frame,(x2,y2),r, (255,0,0),cv2.FILLED)
-              cv2.circle(frame,(cx,cy), r,(0,0.255),cv2.FILLED)
-        len= math.hypot(x2-x1,y2-y1)
+            cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 255), t)
+            cv2.circle(frame, (x1, y1), r, (255, 0, 255), cv2.FILLED)
+            cv2.circle(frame, (x2, y2), r, (255, 0, 0), cv2.FILLED)
+            cv2.circle(frame, (cx, cy), r, (0, 255, 0), cv2.FILLED)
 
-        return len, frame , [x1, y1, x2, y2, cx, cy]
+        length = math.hypot(x2 - x1, y2 - y1)
+        return length, frame, [x1, y1, x2, y2, cx, cy]
+
 
 def main():
         
     ctime=0
     ptime=0
     cap = cv2.VideoCapture(0)
-    detector = HandTrackingDynamic()
+    detector = HandTrackingDynamic(maxHands=3)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     if not cap.isOpened():
@@ -104,7 +117,12 @@ def main():
         frame = detector.findFingers(frame)
         lmsList = detector.findPosition(frame)
         if len(lmsList)!=0:
-            #print(lmsList[0])
+            
+            length, frame, _ = detector.findDistance(4, 8, frame)
+            if length is not None and length < 40:
+                print("Click")
+                cv2.putText(frame, "CLICK", (50, 100),
+                            cv2.FONT_HERSHEY_PLAIN, 3, (0, 0, 255), 3)
 
             ctime = time.time()
             fps =1/(ctime-ptime)
@@ -115,7 +133,6 @@ def main():
         #gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             cv2.imshow('frame', frame)
             cv2.waitKey(1)
-
 
                 
 if __name__ == "__main__":
