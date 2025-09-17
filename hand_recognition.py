@@ -3,6 +3,7 @@ import mediapipe as mp
 import time
 import math as math
 import numpy as np
+from gestures import GestureRecognizer
 
 
 class HandTrackingDynamic:
@@ -96,43 +97,66 @@ class HandTrackingDynamic:
         length = math.hypot(x2 - x1, y2 - y1)
         return length, frame, [x1, y1, x2, y2, cx, cy]
 
-
 def main():
-        
-    ctime=0
-    ptime=0
+    ctime = 0.0
+    ptime = 0.0
+
     cap = cv2.VideoCapture(0)
-    detector = HandTrackingDynamic(maxHands=3)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     if not cap.isOpened():
         print("Cannot open camera")
-        exit()
+        return
+
+    detector = HandTrackingDynamic(maxHands=3)
+    recognizer = GestureRecognizer(smooth_frames=5, min_hold_ms=120)
+
+    # (Optional) create the window explicitly
+    cv2.namedWindow('frame', cv2.WINDOW_NORMAL)
+
+    # Set capture size (optional)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
     while True:
         ret, frame = cap.read()
         if not ret:
             continue
 
+        # Run mediapipe + landmarks
         frame = detector.findFingers(frame)
-        lmsList = detector.findPosition(frame)
-        if len(lmsList)!=0:
-            
-            length, frame, _ = detector.findDistance(4, 8, frame)
-            if length is not None and length < 40:
-                print("Click")
-                cv2.putText(frame, "CLICK", (50, 100),
+        lmsList, bbox = detector.findPosition(frame)
+
+        # Optional: pinch distance
+        length = None
+        if lmsList and len(lmsList) > 8:
+            length, frame, _ = detector.findDistance(4, 8, frame, draw=False)
+
+        # Gesture recognition (do NOT create recognizer in the loop)
+        gesture = recognizer.update(lmsList, bbox)
+        if gesture:
+            print(gesture)
+            cv2.putText(frame, f"{gesture}", (50, 110),
+                        cv2.FONT_HERSHEY_PLAIN, 3, (0, 0, 255), 3)
+
+        if length is not None and bbox:
+            hand_w = max(1, bbox[2] - bbox[0])
+            if (length / hand_w) < 0.18:
+                print("click")
+                cv2.putText(frame, "CLICK", (50, 110),
                             cv2.FONT_HERSHEY_PLAIN, 3, (0, 0, 255), 3)
 
-            ctime = time.time()
-            fps =1/(ctime-ptime)
-            ptime = ctime
+        ctime = time.time()
+        fps = 1 / (ctime - ptime) if ctime != ptime else 0
+        ptime = ctime
+        cv2.putText(frame, str(int(fps)), (10, 70),
+                    cv2.FONT_HERSHEY_PLAIN, 3, (255, 0, 255), 3)
 
-            cv2.putText(frame, str(int(fps)), (10,70), cv2.FONT_HERSHEY_PLAIN,3,(255,0,255),3)
- 
-        #gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            cv2.imshow('frame', frame)
-            cv2.waitKey(1)
+        cv2.imshow('frame', frame)
+        if cv2.waitKey(1) & 0xFF == 27:
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
 
                 
 if __name__ == "__main__":
