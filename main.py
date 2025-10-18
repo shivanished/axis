@@ -287,14 +287,8 @@ def main():
     cam_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     print(f"Camera resolution: {cam_width}x{cam_height}")
     
-    # Detect screen
-    screen_corners = calibrate_screen_detection(cap, detector)
-    
-    if screen_corners is None:
-        print("Screen detection cancelled.")
-        cap.release()
-        cv2.destroyAllWindows()
-        return
+    # Initialize screen corners - will be detected continuously
+    screen_corners = None
     
     # Gesture state tracking
     pinch_state = "none"  # none, start, hold, release
@@ -312,10 +306,11 @@ def main():
     
     print("\n" + "="*60)
     print("TRACKING MODE")
-    print("Pinch with thumb+index to move cursor")
+    print("Cursor follows midpoint between thumb and index finger")
     print("Quick pinch (< 0.2s) = CLICK")
-    print("Hold pinch (> 0.3s) = DRAG mode")
-    print("Press 'D' to re-detect screen | 'W' to toggle window | ESC to exit")
+    print("Hold pinch + move (> 0.3s) = DRAG mode")
+    print("Screen detection: CONTINUOUS (automatically finds screen)")
+    print("Press 'W' to toggle window | ESC to exit")
     print("Pinch sensitivity: Adjust by changing pinch_threshold in code (default: 0.15)")
     print("="*60 + "\n")
     
@@ -326,23 +321,25 @@ def main():
         
         frame_height, frame_width = frame.shape[:2]
         
-        # Continuously re-detect screen to keep rectangle visible
-        # Use a slightly lower threshold for continuous detection to be more forgiving
-        temp_corners = detect_screen_rectangle(frame, min_area_ratio=0.12)
+        # Continuously detect screen rectangle
+        temp_corners = detect_screen_rectangle(frame, min_area_ratio=0.10)
         if temp_corners is not None:
-            # Only update if the new detection is reasonably close to the previous one
-            # This prevents jumping between different rectangles
-            if screen_corners is not None:
+            # If we don't have previous corners, use the new ones
+            if screen_corners is None:
+                screen_corners = temp_corners
+            else:
                 # Calculate center distance between old and new corners
                 old_center = np.mean(screen_corners, axis=0)
                 new_center = np.mean(temp_corners, axis=0)
                 center_distance = np.linalg.norm(new_center - old_center)
                 
                 # Only update if the center hasn't moved too much (prevents jitter)
-                if center_distance < 100:  # Adjust this threshold as needed
+                # Use a more lenient threshold for continuous detection
+                if center_distance < 150:  # Increased threshold for better tracking
                     screen_corners = temp_corners
-            else:
-                screen_corners = temp_corners
+                # If the new detection is significantly different, it might be a better detection
+                elif center_distance > 200:  # Large movement - might be camera repositioning
+                    screen_corners = temp_corners
         
         # Process hand tracking
         frame = detector.findFingers(frame, draw=show_window)
@@ -355,15 +352,35 @@ def main():
             
             for corner in pts:
                 cv2.circle(frame, tuple(corner), 6, (0, 255, 0), -1)
+            
+            # Add "Screen Detected" text near the rectangle
+            center_x = int(np.mean(pts[:, 0]))
+            center_y = int(np.mean(pts[:, 1]))
+            cv2.putText(frame, "SCREEN DETECTED", (center_x - 80, center_y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        elif show_window:
+            # Show "Looking for screen..." message
+            cv2.putText(frame, "Looking for screen...", (frame_width//2 - 100, frame_height//2),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
         
-        # Detect pinch and handle gesture states
+        # Detect hand position and pinch state
         current_time = time.time()
+        hand_detected = False
+        hand_x, hand_y = 0, 0
         pinch_detected = False
-        pinch_x, pinch_y = 0, 0
         pinch_strength = 0
         
         if lmsList and len(lmsList) > 8:
-            # Get distance between thumb and index finger
+            # Get thumb and index finger positions
+            thumb_x, thumb_y = lmsList[4][1], lmsList[4][2]  # Thumb tip
+            index_x, index_y = lmsList[8][1], lmsList[8][2]  # Index finger tip
+            
+            # Calculate midpoint between thumb and index finger for cursor positioning
+            hand_x = (thumb_x + index_x) // 2
+            hand_y = (thumb_y + index_y) // 2
+            hand_detected = True
+            
+            # Get distance between thumb and index finger for pinch detection
             length, frame, info = detector.findDistance(4, 8, frame, draw=True)
             
             if length is not None and bbox:
@@ -379,20 +396,10 @@ def main():
                     pinch_detected = True
                     pinch_strength = 1.0 - (pinch_ratio / pinch_threshold)  # 0-1 strength
                     
-                    # Use the midpoint between thumb and index finger
-                    if info and len(info) >= 6:
-                        pinch_x, pinch_y = info[4], info[5]  # cx, cy from findDistance
-                    else:
-                        thumb_x, thumb_y = lmsList[4][1], lmsList[4][2]
-                        index_x, index_y = lmsList[8][1], lmsList[8][2]
-                        pinch_x = (thumb_x + index_x) // 2
-                        pinch_y = (thumb_y + index_y) // 2
-                    
                     # Handle gesture state transitions
                     if pinch_state == "none":
                         pinch_state = "start"
                         pinch_start_time = current_time
-                        last_pinch_pos = (pinch_x, pinch_y)
                         click_performed = False
                         drag_started = False
                     elif pinch_state == "start":
@@ -422,9 +429,10 @@ def main():
                     pinch_state = "none"
                     drag_started = False
         
-        if pinch_detected:
-            # Map to screen using detected screen corners
-            screen_x, screen_y = map_to_screen(pinch_x, pinch_y, screen_corners,
+        # Always move cursor when hand is detected and screen is found
+        if hand_detected and screen_corners is not None:
+            # Map hand position to screen coordinates
+            screen_x, screen_y = map_to_screen(hand_x, hand_y, screen_corners,
                                               screen_width, screen_height)
             
             # Move cursor with smoothing for better tracking
@@ -436,67 +444,84 @@ def main():
             pyautogui.moveTo(new_x, new_y)
             
             if show_window:
-                # Draw pinch point with state-based color
-                if pinch_state == "start":
-                    color = (0, 255, 255)  # Yellow for start
-                elif pinch_state == "hold":
-                    color = (0, 0, 255)  # Red for drag
-                else:
-                    color = (0, 255, 0)  # Green for normal
+                # Draw thumb and index finger positions
+                cv2.circle(frame, (thumb_x, thumb_y), 8, (255, 0, 0), -1)  # Blue for thumb
+                cv2.circle(frame, (index_x, index_y), 8, (0, 0, 255), -1)  # Red for index
                 
-                cv2.circle(frame, (pinch_x, pinch_y), 15, color, -1)
-                cv2.circle(frame, (pinch_x, pinch_y), 20, (255, 255, 255), 2)
+                # Draw midpoint (cursor position)
+                cv2.circle(frame, (hand_x, hand_y), 10, (0, 255, 0), -1)
+                cv2.circle(frame, (hand_x, hand_y), 15, (255, 255, 255), 2)
+                
+                # Draw line between thumb and index finger
+                cv2.line(frame, (thumb_x, thumb_y), (index_x, index_y), (255, 255, 255), 2)
+                
+                # Draw pinch indicator if pinching
+                if pinch_detected:
+                    if pinch_state == "start":
+                        color = (0, 255, 255)  # Yellow for start
+                        cv2.circle(frame, (hand_x, hand_y), 20, color, 3)
+                    elif pinch_state == "hold":
+                        color = (0, 0, 255)  # Red for drag
+                        cv2.circle(frame, (hand_x, hand_y), 25, color, 4)
                 
                 # Display information based on state
-                if pinch_state == "start":
-                    hold_time = current_time - pinch_start_time
-                    cv2.putText(frame, f"PINCH START - Hold for drag ({hold_time:.1f}s)", (10, 30),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-                elif pinch_state == "hold":
-                    cv2.putText(frame, "DRAGGING MODE", (10, 30),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                if pinch_detected:
+                    if pinch_state == "start":
+                        hold_time = current_time - pinch_start_time
+                        cv2.putText(frame, f"PINCH - Hold for drag ({hold_time:.1f}s)", (10, 30),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                    elif pinch_state == "hold":
+                        cv2.putText(frame, "DRAGGING MODE", (10, 30),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                    else:
+                        cv2.putText(frame, f"PINCH DETECTED! Strength: {pinch_strength:.2f}", (10, 30),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                 else:
-                    cv2.putText(frame, f"PINCH DETECTED! Strength: {pinch_strength:.2f}", (10, 30),
+                    cv2.putText(frame, "HAND DETECTED - Move to control cursor", (10, 30),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                 
                 cv2.putText(frame, f"Screen: ({screen_x}, {screen_y})", (10, 60),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                cv2.putText(frame, f"Camera: ({pinch_x}, {pinch_y})", (10, 90),
+                cv2.putText(frame, f"Midpoint: ({hand_x}, {hand_y})", (10, 90),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                if length is not None:
+                    cv2.putText(frame, f"Distance: {length:.1f}px", (10, 120),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 
-                # Draw line from pinch to mapped screen location
+                # Draw line from hand to mapped screen location
                 screen_cam_x = int((screen_x / screen_width) * (screen_corners[2][0] - screen_corners[0][0]) + screen_corners[0][0])
                 screen_cam_y = int((screen_y / screen_height) * (screen_corners[2][1] - screen_corners[0][1]) + screen_corners[0][1])
-                cv2.line(frame, (pinch_x, pinch_y), (screen_cam_x, screen_cam_y), (255, 0, 255), 3)
+                cv2.line(frame, (hand_x, hand_y), (screen_cam_x, screen_cam_y), (255, 0, 255), 3)
                 
                 # Draw crosshair at target location
                 cv2.line(frame, (screen_cam_x-10, screen_cam_y), (screen_cam_x+10, screen_cam_y), (0, 255, 255), 2)
                 cv2.line(frame, (screen_cam_x, screen_cam_y-10), (screen_cam_x, screen_cam_y+10), (0, 255, 255), 2)
             
-            print(f"Pinch at ({pinch_x}, {pinch_y}) -> Screen ({screen_x}, {screen_y}) | State: {pinch_state} | Strength: {pinch_strength:.2f}")
+            print(f"Midpoint at ({hand_x}, {hand_y}) -> Screen ({screen_x}, {screen_y}) | Pinch: {pinch_detected} | State: {pinch_state} | Distance: {length:.1f}px")
         else:
             if show_window and lmsList:
-                # Show hand is detected but no pinch
-                cv2.putText(frame, "Hand detected - Pinch to move cursor", (10, 30),
+                # Show hand is detected but screen not found
+                cv2.putText(frame, "Hand detected - Waiting for screen detection", (10, 30),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
         
         if show_window:
             # Status indicator
-            status_color = (0, 255, 0) if screen_corners is not None else (0, 0, 255)
-            status_text = "READY" if screen_corners is not None else "NO SCREEN DETECTED"
+            if screen_corners is not None:
+                status_color = (0, 255, 0)
+                status_text = "READY - Screen detected"
+            else:
+                status_color = (0, 255, 255)  # Yellow for detecting
+                status_text = "DETECTING SCREEN..."
+            
             cv2.putText(frame, f"Status: {status_text}", (10, frame_height - 50),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
-            cv2.putText(frame, "Press 'D' to re-detect screen | 'W' to toggle window", (10, frame_height - 20),
+            cv2.putText(frame, "Press 'W' to toggle window | ESC to exit", (10, frame_height - 20),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             cv2.imshow('Hand Tracking', frame)
         
         key = cv2.waitKey(1) & 0xFF
         if key == 27:  # ESC
             break
-        elif key == ord('d') or key == ord('D'):  # Re-detect screen
-            screen_corners = calibrate_screen_detection(cap, detector)
-            if screen_corners is None:
-                break
         elif key == ord('w') or key == ord('W'):  # Toggle window
             show_window = not show_window
             if not show_window:
