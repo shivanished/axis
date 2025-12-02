@@ -92,6 +92,9 @@ class GestureMouseController:
         self.cursor_y = start_y
 
         self._click_latched = False
+        self._drag_active = False  # Track if we're currently dragging
+        self._drag_start_pos = None  # Position where drag started
+        self._pinch_start_pos = None  # Position when pinch started
         self._last_state = "no-hand"
         self._last_ratio = None
         
@@ -119,6 +122,7 @@ class GestureMouseController:
         print("• Keep your hand inside the on-screen bounding box.")
         print("• Hover the cursor by almost pinching thumb and index (leave small gap).")
         print("• Complete the pinch to trigger a click.")
+        print("• Hold pinch and move hand to drag/select (like highlighting text).")
         print("• SCROLLING:")
         print("  - Show ONE finger (index) + flick = Scroll UP")
         print("  - Show TWO fingers (index+middle) + flick = Scroll DOWN")
@@ -147,6 +151,12 @@ class GestureMouseController:
                 self._click_latched = False
                 # Clear hand position history when hand is lost
                 self._hand_position_history = []
+                # Release drag if active
+                if self._drag_active:
+                    pyautogui.mouseUp()
+                    self._drag_active = False
+                self._drag_start_pos = None
+                self._pinch_start_pos = None
                 state_info = {
                     "label": "no-hand",
                     "ratio": None,
@@ -227,6 +237,12 @@ class GestureMouseController:
             state_label = "outside"
             self._click_latched = False
             screen_target = None
+            # Release drag if active
+            if self._drag_active:
+                pyautogui.mouseUp()
+                self._drag_active = False
+            self._drag_start_pos = None
+            self._pinch_start_pos = None
         else:
             # Prioritize pinch detection over scroll gestures
             # If pinching (even slightly), handle pinch/click, ignore scroll gestures
@@ -245,23 +261,76 @@ class GestureMouseController:
             if state_label in ("ready", "click"):
                 screen_target = self._map_to_screen(midpoint, control_box)
                 self._move_cursor(screen_target)
+                
+                # Handle click and drag functionality
+                if state_label == "click":
+                    if not self._click_latched:
+                        # New pinch - click immediately (first priority)
+                        pyautogui.click()
+                        self._click_latched = True
+                        self._pinch_start_pos = screen_target
+                        self._drag_start_pos = screen_target
+                    else:
+                        # Pinch is held - check if hand moved (start drag)
+                        if self._pinch_start_pos is not None:
+                            # Check if hand moved significantly from where pinch started
+                            move_distance = math.hypot(
+                                screen_target[0] - self._pinch_start_pos[0],
+                                screen_target[1] - self._pinch_start_pos[1]
+                            )
+                            if move_distance > 10:  # Moved more than 10 pixels
+                                # Start dragging (hold mouse button down)
+                                if not self._drag_active:
+                                    self._drag_active = True
+                                    pyautogui.mouseDown()
+                                    # Update drag start to current position to avoid jump
+                                    self._drag_start_pos = screen_target
+                    
+                    # If dragging, continue moving cursor (mouse is already down)
+                    if self._drag_active:
+                        # Cursor is already moved above, mouse button is held down
+                        pass
+                else:
+                    # In "ready" state - not clicking, so no drag
+                    if self._drag_active:
+                        pyautogui.mouseUp()
+                        self._drag_active = False
+                    self._drag_start_pos = None
+                    self._pinch_start_pos = None
             else:
                 screen_target = None
                 if state_label not in ("scroll-one", "scroll-two"):
                     self._click_latched = False
+                    # Release drag if active
+                    if self._drag_active:
+                        pyautogui.mouseUp()
+                        self._drag_active = False
+                    self._drag_start_pos = None
+                    self._pinch_start_pos = None
 
-            if state_label == "click" and not self._click_latched:
-                pyautogui.click()
-                self._click_latched = True
-            elif state_label != "click":
+            # Reset click latch when leaving click state
+            if state_label != "click":
                 if state_label not in ("scroll-one", "scroll-two"):
+                    # If we were dragging, release mouse button
+                    if self._drag_active:
+                        pyautogui.mouseUp()
+                        self._drag_active = False
+                    # Click already happened when entering click state, so just reset
                     self._click_latched = False
+                    self._pinch_start_pos = None
 
         # Visual cues for thumb/index/midpoint
         cv2.circle(frame, thumb, 8, (0, 165, 255), -1)
         cv2.circle(frame, index, 8, (255, 90, 120), -1)
         cv2.line(frame, thumb, index, (255, 255, 255), 2)
-        cv2.circle(frame, midpoint, 10, (0, 255, 0), 2)
+        
+        # Highlight differently when dragging
+        if self._drag_active:
+            cv2.circle(frame, midpoint, 15, (0, 0, 255), 3)  # Red circle when dragging
+            cv2.putText(frame, "DRAGGING", (midpoint[0] - 40, midpoint[1] - 20),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        else:
+            cv2.circle(frame, midpoint, 10, (0, 255, 0), 2)  # Green circle normally
         
         # Visual feedback for scrolling gestures
         if finger_gesture == "one":
