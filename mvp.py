@@ -64,7 +64,7 @@ class GestureMouseController:
         box_scale=0.65,
         smooth_factor=0.35,
         hover_ratio=0.32,
-        click_ratio=0.18,
+        click_ratio=0.1,
         detection_confidence=0.65,
         tracking_confidence=0.55,
     ):
@@ -94,6 +94,16 @@ class GestureMouseController:
         self._click_latched = False
         self._last_state = "no-hand"
         self._last_ratio = None
+        
+        # Scrolling state
+        self._hand_position_history = []  # Track finger and wrist positions [(finger_x, finger_y, wrist_x, wrist_y, timestamp), ...]
+        self._max_history = 15  # Keep last 15 positions
+        self._flick_threshold = 30  # Minimum pixel movement for flick detection
+        self._last_scroll_time = time.time()
+        self._scroll_cooldown = 0.2  # Minimum time between scroll triggers (seconds)
+        self._wrist_movement_threshold = 15  # Pixels - if wrist moves up this much, it's a fast flick
+        self._slow_scroll_amount = 2  # Small scroll for slow flicks
+        self._fast_scroll_amount = 6  # More scroll for fast flicks
 
     def run(self, camera_index=0, mirror=True):
         cap = cv2.VideoCapture(camera_index)
@@ -109,6 +119,11 @@ class GestureMouseController:
         print("• Keep your hand inside the on-screen bounding box.")
         print("• Hover the cursor by almost pinching thumb and index (leave small gap).")
         print("• Complete the pinch to trigger a click.")
+        print("• SCROLLING:")
+        print("  - Show ONE finger (index) + flick = Scroll UP")
+        print("  - Show TWO fingers (index+middle) + flick = Scroll DOWN")
+        print("  - Slow flick (finger only) = 2 units")
+        print("  - Fast flick (whole hand moves up >= 15px) = 6 units")
         print("• Press ESC or Q to exit.")
         print("=" * 70 + "\n")
 
@@ -130,11 +145,15 @@ class GestureMouseController:
                 state_info = self._handle_hand(frame, hand_info, control_box)
             else:
                 self._click_latched = False
+                # Clear hand position history when hand is lost
+                self._hand_position_history = []
                 state_info = {
                     "label": "no-hand",
                     "ratio": None,
                     "midpoint": None,
                     "inside_box": False,
+                    "finger_gesture": None,
+                    "flick_direction": None,
                 }
 
             self._draw_guides(frame, control_box, state_info)
@@ -167,6 +186,40 @@ class GestureMouseController:
         hand_size = max(bbox[2] - bbox[0], bbox[3] - bbox[1], 1)
         pinch_ratio = pinch_distance / hand_size
 
+        # Detect finger gesture for scrolling
+        finger_gesture = self._detect_finger_gesture(points)
+        
+        # Get wrist position (landmark 0)
+        wrist = points[0]
+        
+        # Track finger and wrist positions for flick detection
+        current_time = time.time()
+        self._hand_position_history.append((midpoint[0], midpoint[1], wrist[0], wrist[1], current_time))
+        if len(self._hand_position_history) > self._max_history:
+            self._hand_position_history.pop(0)
+        
+        # Detect flick (based on finger movement)
+        flick_direction = self._detect_flick(midpoint)
+        
+        # Calculate wrist movement for fast/slow detection
+        wrist_movement = None
+        if finger_gesture and flick_direction and len(self._hand_position_history) >= 2:
+            window_size = min(5, len(self._hand_position_history))
+            recent_window = self._hand_position_history[-window_size:]
+            if len(recent_window) >= 2:
+                start_entry = recent_window[0]
+                end_entry = recent_window[-1]
+                # Wrist movement: negative means moved up (y decreases)
+                wrist_dy = start_entry[3] - end_entry[3]  # Start y - end y (positive = moved up)
+                wrist_movement = wrist_dy
+        
+        # Perform discrete scroll if gesture detected
+        if finger_gesture and flick_direction:
+            self._perform_scroll(finger_gesture, flick_direction, wrist_movement)
+            # Reset history after detecting flick to avoid continuous scrolling
+            current_time = time.time()
+            self._hand_position_history = [(midpoint[0], midpoint[1], wrist[0], wrist[1], current_time)]
+
         left, top, right, bottom = control_box
         inside_box = left <= midpoint[0] <= right and top <= midpoint[1] <= bottom
 
@@ -175,10 +228,17 @@ class GestureMouseController:
             self._click_latched = False
             screen_target = None
         else:
+            # Prioritize pinch detection over scroll gestures
+            # If pinching (even slightly), handle pinch/click, ignore scroll gestures
             if pinch_ratio < self.click_ratio:
                 state_label = "click"
             elif pinch_ratio < self.hover_ratio:
                 state_label = "ready"
+            # Only check for scroll gestures if NOT pinching
+            elif finger_gesture:
+                state_label = f"scroll-{finger_gesture}"
+                screen_target = None
+                self._click_latched = False
             else:
                 state_label = "open"
 
@@ -187,19 +247,39 @@ class GestureMouseController:
                 self._move_cursor(screen_target)
             else:
                 screen_target = None
-                self._click_latched = False
+                if state_label not in ("scroll-one", "scroll-two"):
+                    self._click_latched = False
 
             if state_label == "click" and not self._click_latched:
                 pyautogui.click()
                 self._click_latched = True
             elif state_label != "click":
-                self._click_latched = False
+                if state_label not in ("scroll-one", "scroll-two"):
+                    self._click_latched = False
 
         # Visual cues for thumb/index/midpoint
         cv2.circle(frame, thumb, 8, (0, 165, 255), -1)
         cv2.circle(frame, index, 8, (255, 90, 120), -1)
         cv2.line(frame, thumb, index, (255, 255, 255), 2)
         cv2.circle(frame, midpoint, 10, (0, 255, 0), 2)
+        
+        # Visual feedback for scrolling gestures
+        if finger_gesture == "one":
+            # Highlight index finger
+            cv2.circle(frame, index, 15, (0, 255, 255), 3)
+            if flick_direction:
+                speed_type = "FAST" if wrist_movement and wrist_movement >= self._wrist_movement_threshold else "SLOW"
+                cv2.putText(frame, f"ONE FINGER - SCROLL UP ({flick_direction}, {speed_type})", (10, 50),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+        elif finger_gesture == "two":
+            # Highlight index and middle fingers
+            middle = points[12]
+            cv2.circle(frame, index, 15, (255, 255, 0), 3)
+            cv2.circle(frame, middle, 15, (255, 255, 0), 3)
+            if flick_direction:
+                speed_type = "FAST" if wrist_movement and wrist_movement >= self._wrist_movement_threshold else "SLOW"
+                cv2.putText(frame, f"TWO FINGERS - SCROLL DOWN ({flick_direction}, {speed_type})", (10, 50),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
 
         self._last_state = state_label
         self._last_ratio = pinch_ratio
@@ -209,6 +289,9 @@ class GestureMouseController:
             "ratio": pinch_ratio,
             "midpoint": midpoint,
             "inside_box": inside_box,
+            "finger_gesture": finger_gesture,
+            "flick_direction": flick_direction,
+            "wrist_movement": wrist_movement,
         }
 
     def _map_to_screen(self, midpoint, control_box):
@@ -228,6 +311,188 @@ class GestureMouseController:
         self.cursor_x = int(self.cursor_x + (target_x - self.cursor_x) * self.smooth_factor)
         self.cursor_y = int(self.cursor_y + (target_y - self.cursor_y) * self.smooth_factor)
         pyautogui.moveTo(self.cursor_x, self.cursor_y)
+    
+    def _is_finger_extended(self, points, finger_id):
+        """
+        Check if a finger is extended.
+        finger_id: 0=thumb, 1=index, 2=middle, 3=ring, 4=pinky
+        """
+        # MediaPipe hand landmarks:
+        # Thumb: 4 (tip), 3 (IP), 2 (MP), 1 (CMC)
+        # Index: 8 (tip), 7 (PIP), 6 (MCP), 5 (CMC)
+        # Middle: 12 (tip), 11 (PIP), 10 (MCP), 9 (CMC)
+        # Ring: 16 (tip), 15 (PIP), 14 (MCP), 13 (CMC)
+        # Pinky: 20 (tip), 19 (PIP), 18 (MCP), 17 (CMC)
+        
+        finger_tips = [4, 8, 12, 16, 20]
+        finger_pips = [3, 7, 11, 15, 19]
+        finger_mcps = [2, 6, 10, 14, 18]
+        
+        if finger_id == 0:  # Thumb (special case - check x coordinate relative to wrist)
+            tip = points[finger_tips[0]]
+            wrist = points[0]  # Wrist landmark
+            # For thumb, check if tip is further from wrist than IP joint
+            ip = points[finger_pips[0]]
+            tip_dist = abs(tip[0] - wrist[0])
+            ip_dist = abs(ip[0] - wrist[0])
+            return tip_dist > ip_dist
+        else:
+            tip_idx = finger_tips[finger_id]
+            pip_idx = finger_pips[finger_id]
+            mcp_idx = finger_mcps[finger_id]
+            
+            tip = points[tip_idx]
+            pip = points[pip_idx]
+            mcp = points[mcp_idx]
+            
+            # Finger is extended if tip is above PIP (y is smaller in image coordinates)
+            # Also check that tip is above MCP for more reliable detection
+            return tip[1] < pip[1] and tip[1] < mcp[1]
+    
+    def _detect_finger_gesture(self, points):
+        """
+        Detect finger counting gesture with occlusion handling.
+        Returns: "one" (index only), "two" (index + middle), or None
+        """
+        index_extended = self._is_finger_extended(points, 1)
+        middle_extended = self._is_finger_extended(points, 2)
+        thumb_extended = self._is_finger_extended(points, 0)
+        ring_extended = self._is_finger_extended(points, 3)
+        pinky_extended = self._is_finger_extended(points, 4)
+        
+        # Get finger tip positions for occlusion detection
+        index_tip = points[8]  # Index finger tip
+        middle_tip = points[12]  # Middle finger tip
+        ring_tip = points[16]  # Ring finger tip
+        pinky_tip = points[20]  # Pinky finger tip
+        
+        # Check if middle finger might be occluded (behind index)
+        # If middle finger tip is close to index finger tip horizontally, it might be occluded
+        index_middle_horizontal_dist = abs(index_tip[0] - middle_tip[0])
+        index_middle_vertical_dist = abs(index_tip[1] - middle_tip[1])
+        
+        # Get middle finger PIP to check if it's extended
+        middle_pip = points[11]  # Middle finger PIP
+        
+        # If middle finger is close horizontally to index, it might be occluded
+        # Check if middle PIP suggests it's extended (tip above PIP) even if tip detection failed
+        middle_possibly_extended = middle_extended
+        if index_middle_horizontal_dist < 35:  # Close horizontally (might be occluded)
+            # If middle tip is above PIP, it's likely extended even if occluded
+            if middle_tip[1] < middle_pip[1]:
+                middle_possibly_extended = True
+            # Also check if middle is in a position that suggests it's extended but behind index
+            elif index_middle_vertical_dist < 60:  # Vertically close
+                middle_possibly_extended = True
+        
+        # Check for "two" - index and middle (accounting for occlusion)
+        # Both should be extended, or middle might be occluded behind index
+        if index_extended and middle_possibly_extended and not ring_extended and not pinky_extended:
+            return "two"
+        
+        # Check for "one" - only index finger extended (thumb can be extended too)
+        # Make sure middle is clearly not extended (not just occluded)
+        if index_extended and not ring_extended and not pinky_extended:
+            # If middle is far from index horizontally, it's definitely not "two"
+            if index_middle_horizontal_dist > 45:
+                if not middle_extended:
+                    return "one"
+            # If middle is close but clearly not extended (tip below PIP)
+            elif middle_tip[1] >= middle_pip[1]:  # Middle tip is below PIP (not extended)
+                return "one"
+            # If middle is not detected as extended and not close to index
+            elif not middle_extended and index_middle_horizontal_dist > 30:
+                return "one"
+        
+        return None
+    
+    def _detect_flick(self, current_pos):
+        """
+        Detect flick gesture based on hand position history.
+        Returns: "up", "down", or None
+        """
+        if len(self._hand_position_history) < 3:
+            return None
+        
+        # Use recent history for flick detection (last 5-7 positions)
+        recent_count = min(7, len(self._hand_position_history))
+        recent_history = self._hand_position_history[-recent_count:]
+        
+        if len(recent_history) < 3:
+            return None
+        
+        # Calculate vertical movement (y direction) and time
+        # Format: (finger_x, finger_y, wrist_x, wrist_y, timestamp)
+        start_entry = recent_history[0]
+        end_entry = recent_history[-1]
+        start_finger_y = start_entry[1]  # Finger y position
+        end_finger_y = end_entry[1]
+        start_time = start_entry[4]  # Timestamp
+        end_time = end_entry[4]
+        
+        total_dy = end_finger_y - start_finger_y  # Positive = moving down, Negative = moving up
+        total_dt = end_time - start_time
+        
+        # Check if movement is significant enough
+        if abs(total_dy) < self._flick_threshold or total_dt < 0.05:
+            return None
+        
+        # Check for consistent direction (not just noise)
+        # Count how many steps are in the same direction
+        up_steps = 0
+        down_steps = 0
+        for i in range(1, len(recent_history)):
+            dy_step = recent_history[i][1] - recent_history[i-1][1]  # Finger y movement
+            if dy_step < -2:  # Moving up (threshold to ignore small movements)
+                up_steps += 1
+            elif dy_step > 2:  # Moving down
+                down_steps += 1
+        
+        # Require at least 60% of steps in the same direction
+        total_steps = up_steps + down_steps
+        if total_steps == 0:
+            return None
+        
+        if up_steps > down_steps and up_steps / total_steps > 0.6:
+            return "up"
+        elif down_steps > up_steps and down_steps / total_steps > 0.6:
+            return "down"
+        
+        return None
+    
+    def _perform_scroll(self, gesture, flick_direction, wrist_movement):
+        """
+        Perform discrete scroll based on gesture and wrist movement.
+        gesture: "one" (scroll up) or "two" (scroll down)
+        flick_direction: "up" or "down"
+        wrist_movement: pixels wrist moved up (positive = moved up, negative = moved down)
+        """
+        current_time = time.time()
+        
+        # Check cooldown
+        if current_time - self._last_scroll_time < self._scroll_cooldown:
+            return
+        
+        # Determine fast vs slow based on wrist movement
+        # Fast flick: whole hand moves up (wrist_movement >= threshold)
+        # Slow flick: only finger moves (wrist_movement < threshold)
+        if wrist_movement is not None and wrist_movement >= self._wrist_movement_threshold:
+            # Fast flick - whole hand moved up - 6 units
+            scroll_amount = self._fast_scroll_amount
+        else:
+            # Slow flick - only finger moved - 2 units
+            scroll_amount = self._slow_scroll_amount
+        
+        # Perform discrete scroll based on gesture
+        # Two fingers = scroll DOWN, One finger = scroll UP
+        if gesture == "two":
+            # Two fingers - scroll down (positive)
+            pyautogui.scroll(scroll_amount)
+        elif gesture == "one":
+            # One finger - scroll up (negative)
+            pyautogui.scroll(-scroll_amount)
+        
+        self._last_scroll_time = current_time
 
     def _draw_guides(self, frame, control_box, state_info):
         left, top, right, bottom = control_box
@@ -237,12 +502,23 @@ class GestureMouseController:
             "open": (255, 255, 255),
             "ready": (0, 208, 255),
             "click": (0, 255, 0),
+            "scroll-one": (0, 255, 255),
+            "scroll-two": (255, 255, 0),
         }.get(state_info["label"], (200, 200, 200))
 
         cv2.rectangle(frame, (left, top), (right, bottom), box_color, 3)
+        
+        # Update instruction text based on state
+        if state_info.get("finger_gesture") == "one":
+            instruction = "ONE finger: Flick to scroll UP"
+        elif state_info.get("finger_gesture") == "two":
+            instruction = "TWO fingers: Flick to scroll DOWN"
+        else:
+            instruction = "Move hand inside the box; almost pinch to steer, pinch to click"
+        
         cv2.putText(
             frame,
-            "Move hand inside the box; almost pinch to steer, pinch to click",
+            instruction,
             (max(10, left), max(25, top - 10)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
@@ -253,6 +529,14 @@ class GestureMouseController:
         status_text = f"State: {state_info['label'].upper()}"
         if state_info["ratio"] is not None:
             status_text += f" | pinch={state_info['ratio']:.2f}"
+        if state_info.get("finger_gesture"):
+            status_text += f" | gesture={state_info['finger_gesture']}"
+        if state_info.get("flick_direction"):
+            status_text += f" | flick={state_info['flick_direction']}"
+        if state_info.get("wrist_movement") is not None:
+            speed_type = "FAST" if state_info['wrist_movement'] >= self._wrist_movement_threshold else "SLOW"
+            status_text += f" | wrist={state_info['wrist_movement']:.0f}px ({speed_type})"
+        
         cv2.putText(
             frame,
             status_text,
@@ -310,7 +594,7 @@ def parse_args():
     parser.add_argument(
         "--click-threshold",
         type=float,
-        default=0.18,
+        default=0.1,
         help="Normalized pinch ratio that triggers a click.",
     )
     parser.add_argument(
