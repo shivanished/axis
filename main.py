@@ -1,11 +1,16 @@
 import argparse
 import math
+import threading
 import time
 
 import cv2
 import mediapipe as mp
 import numpy as np
 import pyautogui
+from pynput import keyboard
+from PySide6.QtCore import Qt, QTimer, Signal, QObject
+from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 
 class SimpleHandTracker:
@@ -49,6 +54,152 @@ class SimpleHandTracker:
             self._drawer.draw_landmarks(frame, hand_landmarks, self._connections)
 
         return {"points": points, "bbox": bbox}
+
+
+class OverlayWindow(QWidget):
+    """
+    Frameless, always-on-top overlay window that displays the camera feed.
+    Can be dragged and snaps to screen corners.
+    """
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.WindowStaysOnTopHint |
+            Qt.FramelessWindowHint |
+            Qt.Tool
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
+        
+        # Window properties
+        self.overlay_width = 400
+        self.overlay_height = 300
+        self.setFixedSize(self.overlay_width, self.overlay_height)
+        
+        # Dragging state
+        self._dragging = False
+        self._drag_position = None
+        
+        # Corner snapping threshold
+        self._snap_threshold = 50
+        
+        # Get screen dimensions
+        screen = QApplication.primaryScreen().geometry()
+        self.screen_width = screen.width()
+        self.screen_height = screen.height()
+        
+        # Position in top-right corner by default
+        self._snap_to_corner("top-right")
+        
+        # Create label for displaying frames
+        self.label = QLabel(self)
+        self.label.setAlignment(Qt.AlignCenter)
+        self.label.setStyleSheet("background-color: black;")
+        self.label.setGeometry(0, 0, self.overlay_width, self.overlay_height)
+        
+        # Set window title for identification
+        self.setWindowTitle("Gesture Control Overlay")
+        
+    def _snap_to_corner(self, corner):
+        """Snap window to specified corner."""
+        if corner == "top-left":
+            x = 0
+            y = 0
+        elif corner == "top-right":
+            x = self.screen_width - self.overlay_width
+            y = 0
+        elif corner == "bottom-left":
+            x = 0
+            y = self.screen_height - self.overlay_height
+        elif corner == "bottom-right":
+            x = self.screen_width - self.overlay_width
+            y = self.screen_height - self.overlay_height
+        else:
+            return
+        
+        self.move(x, y)
+    
+    def _get_nearest_corner(self, x, y):
+        """Determine nearest corner based on position."""
+        corners = {
+            "top-left": (0, 0),
+            "top-right": (self.screen_width - self.overlay_width, 0),
+            "bottom-left": (0, self.screen_height - self.overlay_height),
+            "bottom-right": (self.screen_width - self.overlay_width, self.screen_height - self.overlay_height),
+        }
+        
+        min_dist = float('inf')
+        nearest = "top-right"
+        
+        for corner_name, (cx, cy) in corners.items():
+            dist = math.sqrt((x - cx)**2 + (y - cy)**2)
+            if dist < min_dist:
+                min_dist = dist
+                nearest = corner_name
+        
+        # Only snap if within threshold
+        if min_dist <= self._snap_threshold:
+            return nearest
+        return None
+    
+    def mousePressEvent(self, event):
+        """Handle mouse press for dragging."""
+        if event.button() == Qt.LeftButton:
+            self._dragging = True
+            self._drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+    
+    def mouseMoveEvent(self, event):
+        """Handle mouse move for dragging."""
+        if self._dragging and event.buttons() == Qt.LeftButton:
+            new_pos = event.globalPosition().toPoint() - self._drag_position
+            self.move(new_pos)
+            event.accept()
+    
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release and snap to corner."""
+        if event.button() == Qt.LeftButton:
+            self._dragging = False
+            
+            # Get current window position
+            current_x = self.x()
+            current_y = self.y()
+            
+            # Find nearest corner and snap if within threshold
+            nearest = self._get_nearest_corner(current_x, current_y)
+            if nearest:
+                self._snap_to_corner(nearest)
+            
+            event.accept()
+    
+    def update_frame(self, frame):
+        """Update the displayed frame."""
+        # Convert BGR to RGB
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Resize frame to fit overlay while maintaining aspect ratio
+        h, w = rgb_frame.shape[:2]
+        aspect_ratio = w / h
+        
+        if aspect_ratio > self.overlay_width / self.overlay_height:
+            # Frame is wider
+            new_width = self.overlay_width
+            new_height = int(self.overlay_width / aspect_ratio)
+        else:
+            # Frame is taller
+            new_height = self.overlay_height
+            new_width = int(self.overlay_height * aspect_ratio)
+        
+        resized = cv2.resize(rgb_frame, (new_width, new_height))
+        
+        # Convert to QImage
+        h, w, ch = resized.shape
+        bytes_per_line = ch * w
+        qt_image = QImage(resized.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        
+        # Convert to QPixmap and display
+        pixmap = QPixmap.fromImage(qt_image)
+        self.label.setPixmap(pixmap)
 
 
 class GestureMouseController:
@@ -113,8 +264,111 @@ class GestureMouseController:
         if not cap.isOpened():
             raise RuntimeError(f"Unable to access camera index {camera_index}")
 
-        window_name = "Met Glasses MVP"
-        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        # Initialize Qt application
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication([])
+        
+        # Create overlay window
+        overlay = OverlayWindow()
+        overlay_visible = False  # Start hidden
+        
+        # Global keyboard listener state
+        overlay_visible_state = {"visible": False}
+        should_exit = {"exit": False}
+        
+        def toggle_overlay():
+            """Toggle overlay visibility - must be called on main thread."""
+            overlay_visible_state["visible"] = not overlay_visible_state["visible"]
+            if overlay_visible_state["visible"]:
+                overlay.show()
+            else:
+                overlay.hide()
+        
+        def toggle_overlay_safe():
+            """Schedule toggle_overlay to run on main thread."""
+            QTimer.singleShot(0, toggle_overlay)
+        
+        # Set up global keyboard listener for Cmd+I
+        def setup_hotkey_listener():
+            """Set up global hotkey listener in separate thread."""
+            try:
+                # Use HotKey for better macOS support
+                # Try different command key representations for macOS
+                hotkey_combos = [
+                    '<cmd>+i',  # Standard format
+                    '<cmd_l>+i',
+                    '<cmd_r>+i',
+                ]
+                
+                hotkey = None
+                for combo in hotkey_combos:
+                    try:
+                        hotkey = keyboard.HotKey(
+                            keyboard.HotKey.parse(combo),
+                            toggle_overlay_safe
+                        )
+                        break
+                    except:
+                        continue
+                
+                if hotkey is None:
+                    # Fallback to manual detection
+                    pressed_keys = set()
+                    
+                    def on_press(key):
+                        try:
+                            if hasattr(key, 'char') and key.char and key.char.lower() == 'i':
+                                if any(k in pressed_keys for k in [keyboard.Key.cmd, keyboard.Key.cmd_l, keyboard.Key.cmd_r]):
+                                    toggle_overlay_safe()
+                            elif key in [keyboard.Key.cmd, keyboard.Key.cmd_l, keyboard.Key.cmd_r]:
+                                pressed_keys.add(key)
+                        except:
+                            pass
+                    
+                    def on_release(key):
+                        try:
+                            if key in [keyboard.Key.cmd, keyboard.Key.cmd_l, keyboard.Key.cmd_r]:
+                                pressed_keys.discard(key)
+                        except:
+                            pass
+                    
+                    with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+                        listener.join()
+                else:
+                    # Use HotKey listener
+                    def on_press(key):
+                        try:
+                            hotkey.press(key)
+                        except:
+                            pass
+                    
+                    def on_release(key):
+                        try:
+                            hotkey.release(key)
+                        except:
+                            pass
+                    
+                    with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+                        listener.join()
+            except Exception as e:
+                print(f"Warning: Could not set up global hotkey listener: {e}")
+                print("You may need to grant Accessibility permissions in System Settings.")
+                print("On macOS: System Settings > Privacy & Security > Accessibility")
+        
+        # Start keyboard listener in background thread
+        keyboard_thread = threading.Thread(target=setup_hotkey_listener, daemon=True)
+        keyboard_thread.start()
+        
+        # Store exit flag reference in overlay for close event
+        overlay._should_exit = should_exit
+        
+        # Override closeEvent method
+        original_close_event = overlay.closeEvent
+        def close_event_handler(event):
+            should_exit["exit"] = True
+            event.accept()
+        overlay.closeEvent = close_event_handler
 
         print("\n" + "=" * 70)
         print("GESTURE CONTROL MVP")
@@ -128,10 +382,29 @@ class GestureMouseController:
         print("  - Show TWO fingers (index+middle) + flick = Scroll DOWN")
         print("  - Slow flick (finger only) = 2 units")
         print("  - Fast flick (whole hand moves up >= 15px) = 6 units")
-        print("• Press ESC or Q to exit.")
+        print("• Press Cmd+I to toggle overlay visibility.")
+        print("• Press Cmd+Q or close overlay to exit.")
         print("=" * 70 + "\n")
 
-        while True:
+        # Timer for processing Qt events
+        timer = QTimer()
+        timer.timeout.connect(lambda: None)  # Just process events
+        timer.start(16)  # ~60fps
+
+        overlay_visible = False  # Track current visibility state
+
+        while not should_exit["exit"]:
+            # Process Qt events
+            app.processEvents()
+            
+            # Check if overlay visibility changed
+            if overlay_visible_state["visible"] != overlay_visible:
+                overlay_visible = overlay_visible_state["visible"]
+                if overlay_visible:
+                    overlay.show()
+                else:
+                    overlay.hide()
+            
             ret, frame = cap.read()
             if not ret:
                 print("Frame grab failed, attempting to continue...")
@@ -168,13 +441,13 @@ class GestureMouseController:
 
             self._draw_guides(frame, control_box, state_info)
 
-            cv2.imshow(window_name, frame)
-            key = cv2.waitKey(1) & 0xFF
-            if key in (27, ord("q"), ord("Q")):
-                break
+            # Update overlay if visible
+            if overlay_visible:
+                overlay.update_frame(frame)
 
         cap.release()
-        cv2.destroyAllWindows()
+        overlay.close()
+        app.quit()
 
     def _control_box(self, frame_width, frame_height):
         box_w = int(frame_width * self.box_scale)
