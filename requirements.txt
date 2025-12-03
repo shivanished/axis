@@ -26,6 +26,7 @@ PyGetWindow==0.0.9
 PyMsgBox==2.0.1
 pyobjc-core==11.1
 pyobjc-framework-Cocoa==11.1
+pyobjc-framework-AppKit==11.1
 pyobjc-framework-Quartz==11.1
 pyparsing==3.2.5
 pyperclip==1.11.0
@@ -37,3 +38,6 @@ rubicon-objc==0.5.2
 scipy==1.16.2
 six==1.17.0
 sounddevice==0.5.2
+PySide6==6.7.0
+pynput==1.7.6
+pyinstaller==6.17.0
