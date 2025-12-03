@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+:root {
+  --background: #050505;
+  --foreground: #ededed;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-garet), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  overflow: hidden; /* Prevent scrolling globally for this landing page */
+}
+
+/* Aurora Background Animations */
+@keyframes aurora-1 {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.4; }
+  50% { transform: translate(20px, -20px) scale(1.1); opacity: 0.6; }
+}
+@keyframes aurora-2 {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.4; }
+  50% { transform: translate(-20px, 10px) scale(0.9); opacity: 0.5; }
+}
+@keyframes aurora-3 {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.3; }
+  50% { transform: translate(10px, 10px) scale(1.2); opacity: 0.5; }
+}
+
+.aurora-blob-1 {
+  animation: aurora-1 10s ease-in-out infinite;
+}
+.aurora-blob-2 {
+  animation: aurora-2 15s ease-in-out infinite reverse;
+}
+.aurora-blob-3 {
+  animation: aurora-3 12s ease-in-out infinite 2s;
+}
