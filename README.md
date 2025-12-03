@@ -109,7 +109,7 @@ Settings are stored in `~/.gesture_control/settings.json` and can be modified vi
 
 ## Troubleshooting
 
-- **Camera not working**: Check camera permissions in System Settings
+- **Camera not working**: Check camera permissions in System Settings/Privacy
 - **Mouse control not working**: Grant accessibility permissions
 - **App won't open**: Right-click and select "Open" (macOS Gatekeeper)
 
