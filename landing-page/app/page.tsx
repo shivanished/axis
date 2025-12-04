@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence, useAnimation } from "framer-motion";
+import Link from "next/link";
 import {
   Scan,
   Box,
@@ -37,6 +38,19 @@ export default function Home() {
     window.addEventListener("mousemove", handleMouseMove);
     return () => window.removeEventListener("mousemove", handleMouseMove);
   }, []);
+
+  // Toggle body overflow to allow scrolling on solution page
+  useEffect(() => {
+    if (showSolution) {
+      document.body.style.overflow = "auto";
+    } else {
+      document.body.style.overflow = "hidden";
+    }
+    // Cleanup on unmount
+    return () => {
+      document.body.style.overflow = "hidden";
+    };
+  }, [showSolution]);
 
   // Staggered text variants
   const containerVariants = {
@@ -104,7 +118,11 @@ export default function Home() {
   ];
 
   return (
-    <main className="relative flex min-h-screen w-full flex-col items-center justify-center overflow-hidden bg-black text-white selection:bg-white/30 selection:text-white">
+    <main
+      className={`relative flex min-h-screen w-full flex-col items-center ${
+        showSolution ? "justify-start py-20" : "justify-center overflow-hidden"
+      } bg-black text-white selection:bg-white/30 selection:text-white`}
+    >
       {/* Cinematic Background Layer */}
       <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
         {/* Image Container with Parallax & Breathing */}
@@ -149,7 +167,26 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="z-10 flex w-full max-w-6xl flex-col items-center justify-center px-4">
+      {/* Gestures Link - Top Left (aligned vertically with copyright) */}
+      <motion.div
+        className="absolute top-8 flex w-full max-w-6xl px-10 z-20"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 1.5 }}
+      >
+        <Link
+          href="/gestures"
+          className="text-[9px] font-bold text-neutral-400 hover:text-white transition-colors uppercase tracking-[0.2em] font-mono mix-blend-plus-lighter"
+        >
+          Gestures
+        </Link>
+      </motion.div>
+
+      <div
+        className={`z-10 flex w-full max-w-6xl flex-col items-center px-4 ${
+          showSolution ? "justify-start" : "justify-center"
+        }`}
+      >
         <AnimatePresence mode="wait">
           {!showSolution ? (
             <motion.div
@@ -213,7 +250,7 @@ export default function Home() {
               animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
               exit={{ opacity: 0, scale: 1.05, filter: "blur(10px)" }}
               transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] as const }}
-              className="flex w-full flex-col items-center"
+              className="flex w-full flex-col items-center pb-32"
             >
               <motion.button
                 onClick={() => setShowSolution(false)}
