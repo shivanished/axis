@@ -156,12 +156,17 @@ export default function Home() {
                   onClick={() => setShowSolution(true)}
                   className="group relative cursor-pointer overflow-hidden rounded-full border border-white/20 bg-white/5 px-10 py-4 text-sm backdrop-blur-md transition-all hover:border-white/40 hover:bg-white/10 hover:shadow-[0_0_40px_-10px_rgba(255,255,255,0.2)] active:scale-95"
                 >
-                  <span className="relative z-10 flex items-center gap-3 text-neutral-200 transition-colors group-hover:text-white">
+                  <a
+                    href="https://met-glasses.s3.us-east-2.amazonaws.com/MetGlasses.app.zip"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="relative z-10 flex items-center gap-3 text-neutral-200 transition-colors group-hover:text-white"
+                  >
                     <span className="uppercase tracking-[0.15em] text-xs font-semibold">
                       Download Now
                     </span>
                     <Download className="h-4 w-4 transition-transform duration-500 group-hover:translate-y-1" />
-                  </span>
+                  </a>
                   {/* Button Shine Effect */}
                   <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/10 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
                 </button>
