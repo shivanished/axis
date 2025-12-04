@@ -90,8 +90,15 @@ export default function Home() {
     },
     {
       step: "5",
+      title: "Configure camera",
+      description:
+        "In the app settings, switch the camera index to ensure the correct (laptop) camera is being used.",
+      icon: Settings,
+    },
+    {
+      step: "6",
       title: "Try it",
-      description: "Launch the app again and start using gesture control.",
+      description: "Hit start and experience gesture control.",
       icon: Play,
     },
   ];
