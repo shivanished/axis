@@ -2,7 +2,19 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence, useAnimation } from "framer-motion";
-import { Scan, Box, MousePointer2, Download, ChevronLeft } from "lucide-react";
+import {
+  Scan,
+  Box,
+  MousePointer2,
+  Download,
+  ChevronLeft,
+  FolderOpen,
+  AlertTriangle,
+  Settings,
+  Shield,
+  Play,
+  Info,
+} from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -48,24 +60,39 @@ export default function Home() {
     },
   };
 
-  const features = [
+  const installationSteps = [
     {
-      title: "Detection",
-      description:
-        "CNN-powered inference engine identifies 21 skeletal keypoints across your hand.",
-      icon: Scan,
+      step: "1",
+      title: "Unzip folder",
+      description: "Extract the downloaded zip file to your desired location.",
+      icon: FolderOpen,
     },
     {
-      title: "Projection",
+      step: "2",
+      title: "Open app",
       description:
-        "Projection matrices convert 2D-coordinates into calibrated 3D-spatial trajectories.",
-      icon: Box,
+        "Launch the application. It will fail initially—DO NOT hit move to trash.",
+      icon: AlertTriangle,
     },
     {
-      title: "Actuation",
+      step: "3",
+      title: "System Settings",
       description:
-        "System-level integration translates hand kinematics into precise cursor movements.",
-      icon: MousePointer2,
+        "Go to System Settings > Privacy & Security > Click 'Open Anyways' for the app.",
+      icon: Settings,
+    },
+    {
+      step: "4",
+      title: "Authorize permissions",
+      description:
+        "You will be asked to authorize camera and accessibility—provide authentication when prompted.",
+      icon: Shield,
+    },
+    {
+      step: "5",
+      title: "Try it",
+      description: "Launch the app again and start using gesture control.",
+      icon: Play,
     },
   ];
 
@@ -191,30 +218,61 @@ export default function Home() {
                 <ChevronLeft className="w-3 h-3" /> Return
               </motion.button>
 
-              <div className="grid w-full grid-cols-1 gap-8 md:grid-cols-3 perspective-[1000px]">
-                {features.map((feature, index) => (
+              {/* Disclaimer */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2, duration: 0.6 }}
+                className="mb-12 w-full max-w-3xl"
+              >
+                <div className="group relative overflow-hidden rounded-[2rem] border border-amber-500/20 bg-amber-500/5 p-8 backdrop-blur-2xl">
+                  <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 via-transparent to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+                  <div className="relative z-10 flex items-start gap-4">
+                    <div className="mt-1 inline-flex rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-amber-400">
+                      <Info className="h-5 w-5 stroke-[1.5]" />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="mb-2 text-lg font-light text-white tracking-wide">
+                        Important Note
+                      </h3>
+                      <p className="text-sm leading-relaxed text-neutral-300 font-light tracking-wide">
+                        This app hasn't been notarized by Apple yet, which is
+                        why you'll need to manually allow it in System Settings.
+                        We're working on getting it properly signed and
+                        notarized for a smoother installation experience.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+
+              {/* Installation Steps */}
+              <div className="flex w-full flex-wrap justify-center gap-6 perspective-[1000px]">
+                {installationSteps.map((step, index) => (
                   <motion.div
-                    key={feature.title}
+                    key={step.step}
                     initial={{ opacity: 0, y: 40, rotateX: -10 }}
                     animate={{ opacity: 1, y: 0, rotateX: 0 }}
                     transition={{
-                      delay: index * 0.2 + 0.3,
+                      delay: index * 0.15 + 0.4,
                       duration: 0.8,
                       ease: "easeOut",
                     }}
-                    className="group relative overflow-hidden rounded-[2rem] border border-white/10 bg-black/40 p-10 backdrop-blur-2xl transition-all duration-500 hover:border-white/20 hover:bg-black/60 hover:-translate-y-2 hover:shadow-[0_20px_40px_-10px_rgba(0,0,0,0.5)]"
+                    className="group relative overflow-hidden rounded-[2rem] border border-white/10 bg-black/40 p-8 backdrop-blur-2xl transition-all duration-500 hover:border-white/20 hover:bg-black/60 hover:-translate-y-2 hover:shadow-[0_20px_40px_-10px_rgba(0,0,0,0.5)] w-full max-w-sm md:max-w-none md:w-[calc(50%-12px)] lg:w-[calc(33.333%-16px)]"
                   >
                     {/* Card Inner Gradient */}
                     <div className="absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
 
-                    <div className="relative z-10 mb-8 inline-flex rounded-2xl border border-white/10 bg-white/5 p-4 text-white shadow-lg group-hover:border-white/20 group-hover:bg-white/10 transition-colors">
-                      <feature.icon className="h-6 w-6 stroke-[1.5]" />
+                    <div className="relative z-10 mb-6 flex items-center gap-4">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-sm font-semibold text-white shadow-lg group-hover:border-white/20 group-hover:bg-white/10 transition-colors">
+                        {step.step}
+                      </div>
+                      <h3 className="relative z-10 text-xl font-light text-white tracking-wide">
+                        {step.title}
+                      </h3>
                     </div>
-                    <h3 className="relative z-10 mb-4 text-2xl font-light text-white tracking-wide">
-                      {feature.title}
-                    </h3>
                     <p className="relative z-10 text-sm leading-relaxed text-neutral-400 group-hover:text-neutral-300 font-light tracking-wide">
-                      {feature.description}
+                      {step.description}
                     </p>
                   </motion.div>
                 ))}
