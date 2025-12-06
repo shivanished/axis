@@ -37,7 +37,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(camera_group)
         
         # Gesture settings
-        gesture_group = QGroupBox("Gesture Control")
+        gesture_group = QGroupBox("Axis Controls")
         gesture_layout = QFormLayout()
         
         self.box_scale = QDoubleSpinBox()

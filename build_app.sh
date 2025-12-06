@@ -3,7 +3,7 @@
 
 set -e
 
-echo "Building Gesture Control macOS app..."
+echo "Building Axis macOS app..."
 
 # Check if PyInstaller is installed
 if ! command -v pyinstaller &> /dev/null; then
@@ -18,15 +18,15 @@ rm -rf build dist
 
 # Build the app
 echo "Building app bundle..."
-pyinstaller gesture_control.spec --clean
+pyinstaller Axis.spec --clean
 
 # Check if build was successful
-if [ -d "dist/Gesture Control.app" ]; then
+if [ -d "dist/Axis.app" ]; then
     echo "✓ Build successful!"
-    echo "App bundle location: dist/Gesture Control.app"
+    echo "App bundle location: dist/Axis.app"
     echo ""
     echo "To run the app:"
-    echo "  open 'dist/Gesture Control.app'"
+    echo "  open 'dist/Axis.app'"
     echo ""
     echo "Note: You may need to grant camera and accessibility permissions"
     echo "in System Settings > Privacy & Security"

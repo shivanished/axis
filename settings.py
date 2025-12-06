@@ -4,6 +4,7 @@ Persists settings using JSON file.
 """
 import json
 import os
+import shutil
 from pathlib import Path
 
 
@@ -12,9 +13,16 @@ class Settings:
     
     def __init__(self, config_file=None):
         if config_file is None:
-            config_dir = Path.home() / ".gesture_control"
+            config_dir = Path.home() / ".axis"
             config_dir.mkdir(exist_ok=True)
             config_file = config_dir / "settings.json"
+            
+            legacy_file = Path.home() / ".gesture_control" / "settings.json"
+            if not config_file.exists() and legacy_file.exists():
+                try:
+                    shutil.copy2(legacy_file, config_file)
+                except Exception as e:
+                    print(f"Warning: Could not migrate legacy settings: {e}")
         
         self.config_file = Path(config_file)
         self._settings = self._load_settings()

@@ -1,4 +1,4 @@
-# Gesture Control MVP
+# Axis
 
 A hand gesture-based mouse controller for macOS that uses MediaPipe for hand tracking.
 
@@ -61,10 +61,10 @@ pip install pyinstaller
 Or manually:
 
 ```bash
-pyinstaller gesture_control.spec --clean
+pyinstaller Axis.spec --clean
 ```
 
-The app bundle will be created in `dist/Gesture Control.app`.
+The app bundle will be created in `dist/Axis.app`.
 
 ### Permissions
 
@@ -99,13 +99,13 @@ glasses/
 │   ├── settings_dialog.py  # Settings dialog
 │   └── camera_widget.py    # Camera display widget
 ├── resources/              # App resources (icons, etc.)
-├── gesture_control.spec    # PyInstaller spec file
+├── Axis.spec               # PyInstaller spec file
 └── requirements.txt        # Python dependencies
 ```
 
 ## Configuration
 
-Settings are stored in `~/.gesture_control/settings.json` and can be modified via the Settings dialog in the GUI.
+Settings are stored in `~/.axis/settings.json` (legacy configs auto-migrate) and can be modified via the Settings dialog in the GUI.
 
 ## Troubleshooting
 

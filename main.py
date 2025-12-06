@@ -86,7 +86,7 @@ def run_cli_mode(args):
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(description="Gesture Control Application")
+    parser = argparse.ArgumentParser(description="Axis Application")
     parser.add_argument("--cli", action="store_true", help="Run in command-line mode with overlay")
     parser.add_argument("--camera", type=int, default=0, help="Camera index (CLI mode only)")
     parser.add_argument("--box-scale", type=float, default=0.65, help="Box scale (CLI mode only)")
@@ -104,7 +104,7 @@ def main():
     else:
         # GUI mode (default)
         app = QApplication(sys.argv)
-        app.setApplicationName("Gesture Control")
+        app.setApplicationName("Axis")
         
         settings = Settings()
         window = MainWindow(settings)

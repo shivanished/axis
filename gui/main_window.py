@@ -44,7 +44,7 @@ class MainWindow(QMainWindow):
     def __init__(self, settings):
         super().__init__()
         self.settings = settings
-        self.setWindowTitle("Gesture Control")
+        self.setWindowTitle("Axis")
         self.setMinimumSize(400, 300)
         
         # Initialize controller
@@ -75,7 +75,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central_widget)
         
         # Title
-        title = QLabel("Gesture Control")
+        title = QLabel("Axis")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 24px; font-weight: bold; padding: 20px;")
         layout.addWidget(title)
@@ -213,8 +213,8 @@ class MainWindow(QMainWindow):
         """Show about dialog."""
         QMessageBox.about(
             self,
-            "About Gesture Control",
-            "Gesture Control MVP\n\n"
+            "About Axis",
+            "Axis\n\n"
             "Control your mouse with hand gestures.\n\n"
             "• Pinch to click\n"
             "• Almost pinch to move cursor\n"

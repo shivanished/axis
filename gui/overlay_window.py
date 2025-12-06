@@ -71,7 +71,7 @@ class OverlayWindow(QWidget):
         self.label.setGeometry(0, 0, self.overlay_width, self.overlay_height)
         
         # Set window title for identification
-        self.setWindowTitle("Gesture Control Overlay")
+        self.setWindowTitle("Axis Overlay")
         
         # Store reference to NSWindow when we find it (for macOS)
         self._ns_window = None
