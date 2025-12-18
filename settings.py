@@ -39,6 +39,12 @@ class Settings:
             "tracking_confidence": 0.55,
             "mirror": True,
             "overlay_visible": False,
+            # One Euro Filter settings
+            "use_one_euro": True,
+            "one_euro_smoothness": 0.5,  # 0=max smoothing, 1=max responsiveness
+            # Frame interpolation settings (optional, adds lag but smoother)
+            "use_interpolation": False,  # Enable frame buffering and interpolation
+            "buffer_size": 5,  # Number of frames to buffer for interpolation (2-10)
         }
         
         if self.config_file.exists():
@@ -79,4 +85,28 @@ class Settings:
     def get_all(self):
         """Get all settings as a dictionary."""
         return self._settings.copy()
+
+    def get_one_euro_params(self):
+        """
+        Convert smoothness slider value to One Euro Filter parameters.
+
+        Smoothness scale (0.0 to 1.0):
+        - 0.0 = Maximum smoothing (less jitter, more lag)
+        - 0.5 = Balanced (default)
+        - 1.0 = Maximum responsiveness (faster reaction, might be jittery)
+
+        Returns:
+            tuple: (min_cutoff, beta) parameters for OneEuroFilter
+        """
+        smoothness = self.get("one_euro_smoothness", 0.5)
+
+        # Map smoothness to min_cutoff (range: 0.5 to 2.0)
+        # Lower smoothness = lower cutoff = more smoothing
+        min_cutoff = 0.5 + smoothness * 1.5
+
+        # Map smoothness to beta (range: 0.005 to 0.02)
+        # Higher smoothness = higher beta = more responsive
+        beta = 0.005 + smoothness * 0.015
+
+        return min_cutoff, beta
 

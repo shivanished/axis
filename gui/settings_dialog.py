@@ -4,7 +4,7 @@ Settings dialog for configuring gesture control parameters.
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QDoubleSpinBox,
-    QSpinBox, QCheckBox, QPushButton, QGroupBox, QFormLayout
+    QSpinBox, QCheckBox, QPushButton, QGroupBox, QFormLayout, QSlider
 )
 
 
@@ -91,7 +91,51 @@ class SettingsDialog(QDialog):
         
         detection_group.setLayout(detection_layout)
         layout.addWidget(detection_group)
-        
+
+        # Smoothing settings (One Euro Filter)
+        smoothing_group = QGroupBox("Cursor Smoothing")
+        smoothing_layout = QFormLayout()
+
+        self.use_one_euro = QCheckBox()
+        self.use_one_euro.setChecked(settings.get("use_one_euro", True))
+        self.use_one_euro.toggled.connect(self._on_smoothing_toggled)
+        smoothing_layout.addRow("Enable Advanced Smoothing:", self.use_one_euro)
+
+        # Smoothness slider (0-100 mapped to 0.0-1.0)
+        smoothness_container = QVBoxLayout()
+        self.smoothness_slider = QSlider(Qt.Horizontal)
+        self.smoothness_slider.setMinimum(0)
+        self.smoothness_slider.setMaximum(100)
+        smoothness_value = int(settings.get("one_euro_smoothness", 0.5) * 100)
+        self.smoothness_slider.setValue(smoothness_value)
+        self.smoothness_slider.setEnabled(self.use_one_euro.isChecked())
+        self.smoothness_slider.valueChanged.connect(self._on_smoothness_changed)
+
+        # Labels for slider
+        slider_labels = QHBoxLayout()
+        slider_labels.addWidget(QLabel("More Smoothing"))
+        slider_labels.addStretch()
+        slider_labels.addWidget(QLabel("More Responsive"))
+
+        smoothness_container.addWidget(self.smoothness_slider)
+        smoothness_container.addLayout(slider_labels)
+
+        self.smoothness_value_label = QLabel(f"Value: {smoothness_value / 100:.2f}")
+        smoothing_layout.addRow("Smoothness/Responsiveness:", smoothness_container)
+        smoothing_layout.addRow("", self.smoothness_value_label)
+
+        # Frame interpolation toggle
+        self.use_interpolation = QCheckBox()
+        self.use_interpolation.setChecked(settings.get("use_interpolation", False))
+        smoothing_layout.addRow("Enable Frame Interpolation:", self.use_interpolation)
+
+        interpolation_help = QLabel("(Adds latency but creates smoother motion)")
+        interpolation_help.setStyleSheet("color: gray; font-size: 10px;")
+        smoothing_layout.addRow("", interpolation_help)
+
+        smoothing_group.setLayout(smoothing_layout)
+        layout.addWidget(smoothing_group)
+
         # Buttons
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -105,7 +149,16 @@ class SettingsDialog(QDialog):
         button_layout.addWidget(self.cancel_button)
         
         layout.addLayout(button_layout)
-    
+
+    def _on_smoothing_toggled(self, checked):
+        """Handle smoothing toggle."""
+        self.smoothness_slider.setEnabled(checked)
+
+    def _on_smoothness_changed(self, value):
+        """Handle smoothness slider change."""
+        smoothness = value / 100.0
+        self.smoothness_value_label.setText(f"Value: {smoothness:.2f}")
+
     def get_settings(self):
         """Get current settings from dialog."""
         return {
@@ -117,5 +170,8 @@ class SettingsDialog(QDialog):
             "detection_confidence": self.detection_confidence.value(),
             "tracking_confidence": self.tracking_confidence.value(),
             "mirror": self.mirror.isChecked(),
+            "use_one_euro": self.use_one_euro.isChecked(),
+            "one_euro_smoothness": self.smoothness_slider.value() / 100.0,
+            "use_interpolation": self.use_interpolation.isChecked(),
         }
 

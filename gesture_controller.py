@@ -8,6 +8,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import pyautogui
+from OneEuroFilter import OneEuroFilter
 
 
 class SimpleHandTracker:
@@ -69,6 +70,11 @@ class GestureMouseController:
         click_ratio=0.1,
         detection_confidence=0.65,
         tracking_confidence=0.55,
+        use_one_euro=True,
+        min_cutoff=1.0,
+        beta=0.007,
+        use_interpolation=False,
+        buffer_size=5,
     ):
         if not 0.2 <= box_scale <= 0.95:
             raise ValueError("box_scale must be inside [0.2, 0.95]")
@@ -81,6 +87,8 @@ class GestureMouseController:
         self.smooth_factor = smooth_factor
         self.hover_ratio = hover_ratio
         self.click_ratio = click_ratio
+        self.use_one_euro = use_one_euro
+        self.use_interpolation = use_interpolation
 
         self.detector = SimpleHandTracker(
             detection_confidence=detection_confidence,
@@ -92,6 +100,12 @@ class GestureMouseController:
         start_x, start_y = pyautogui.position()
         self.cursor_x = start_x
         self.cursor_y = start_y
+
+        # Initialize One Euro Filters for X and Y coordinates
+        # freq=30 assumes ~30fps processing rate
+        if self.use_one_euro:
+            self.filter_x = OneEuroFilter(freq=30, mincutoff=min_cutoff, beta=beta, dcutoff=1.0)
+            self.filter_y = OneEuroFilter(freq=30, mincutoff=min_cutoff, beta=beta, dcutoff=1.0)
 
         self._click_latched = False
         self._drag_active = False
@@ -109,6 +123,56 @@ class GestureMouseController:
         self._wrist_movement_threshold = 15
         self._slow_scroll_amount = 2
         self._fast_scroll_amount = 6
+
+        # Frame buffering for smooth interpolation
+        self._position_buffer = []  # Buffer of (x, y, timestamp) tuples
+        self._buffer_size = buffer_size  # Number of frames to buffer (adds latency but increases smoothness)
+        self._last_interpolation_time = time.time()
+
+    def update_smoothing_params(self, use_one_euro=None, min_cutoff=None, beta=None, use_interpolation=None):
+        """
+        Update smoothing parameters on the fly without restarting the controller.
+
+        Args:
+            use_one_euro: Whether to use One Euro Filter (if None, keep current)
+            min_cutoff: Minimum cutoff frequency for One Euro Filter (if None, keep current)
+            beta: Beta parameter for One Euro Filter (if None, keep current)
+            use_interpolation: Whether to use frame interpolation (if None, keep current)
+        """
+        if use_one_euro is not None:
+            # If switching filter mode, reinitialize filters
+            if use_one_euro != self.use_one_euro:
+                self.use_one_euro = use_one_euro
+                if use_one_euro:
+                    # Initialize new filters with current position
+                    self.filter_x = OneEuroFilter(
+                        freq=30,
+                        mincutoff=min_cutoff if min_cutoff is not None else 1.0,
+                        beta=beta if beta is not None else 0.007,
+                        dcutoff=1.0
+                    )
+                    self.filter_y = OneEuroFilter(
+                        freq=30,
+                        mincutoff=min_cutoff if min_cutoff is not None else 1.0,
+                        beta=beta if beta is not None else 0.007,
+                        dcutoff=1.0
+                    )
+
+        # Update existing filter parameters using official library's setter methods
+        if self.use_one_euro and (min_cutoff is not None or beta is not None):
+            if min_cutoff is not None:
+                self.filter_x.setMinCutoff(min_cutoff)
+                self.filter_y.setMinCutoff(min_cutoff)
+            if beta is not None:
+                self.filter_x.setBeta(beta)
+                self.filter_y.setBeta(beta)
+
+        # Update interpolation setting
+        if use_interpolation is not None:
+            self.use_interpolation = use_interpolation
+            # Clear buffer when toggling interpolation to avoid stale data
+            if use_interpolation:
+                self._position_buffer = []
 
     def process_frame(self, frame, mirror=True):
         """
@@ -313,10 +377,82 @@ class GestureMouseController:
         return screen_x, screen_y
 
     def _move_cursor(self, target):
+        """
+        Move cursor with optional frame buffering and interpolation.
+        If interpolation is disabled, uses standard One Euro Filter smoothing.
+        """
         target_x, target_y = target
-        self.cursor_x = int(self.cursor_x + (target_x - self.cursor_x) * self.smooth_factor)
-        self.cursor_y = int(self.cursor_y + (target_y - self.cursor_y) * self.smooth_factor)
-        pyautogui.moveTo(self.cursor_x, self.cursor_y)
+        current_time = time.time()
+
+        # Standard mode (no interpolation) - default behavior
+        if not self.use_interpolation:
+            if self.use_one_euro:
+                # Use One Euro Filter for adaptive smoothing
+                smoothed_x = self.filter_x(target_x, current_time)
+                smoothed_y = self.filter_y(target_y, current_time)
+                self.cursor_x = int(smoothed_x)
+                self.cursor_y = int(smoothed_y)
+            else:
+                # Fall back to simple exponential smoothing
+                self.cursor_x = int(self.cursor_x + (target_x - self.cursor_x) * self.smooth_factor)
+                self.cursor_y = int(self.cursor_y + (target_y - self.cursor_y) * self.smooth_factor)
+
+            pyautogui.moveTo(self.cursor_x, self.cursor_y)
+            return
+
+        # Interpolation mode (optional, adds latency but smoother)
+        # Add target to buffer
+        self._position_buffer.append((target_x, target_y, current_time))
+
+        # Keep buffer at specified size
+        if len(self._position_buffer) > self._buffer_size:
+            self._position_buffer.pop(0)
+
+        # Need at least 2 positions to interpolate
+        if len(self._position_buffer) < 2:
+            # Not enough frames yet, just use current position
+            if self.use_one_euro:
+                smoothed_x = self.filter_x(target_x, current_time)
+                smoothed_y = self.filter_y(target_y, current_time)
+                self.cursor_x = smoothed_x
+                self.cursor_y = smoothed_y
+            else:
+                self.cursor_x = target_x
+                self.cursor_y = target_y
+            pyautogui.moveTo(int(self.cursor_x), int(self.cursor_y))
+            return
+
+        # Interpolate between buffered positions
+        # Use the oldest two positions in the buffer for smooth interpolation
+        pos0_x, pos0_y, time0 = self._position_buffer[0]
+        pos1_x, pos1_y, time1 = self._position_buffer[1]
+
+        # Calculate interpolation factor based on time
+        time_delta = time1 - time0
+        if time_delta > 0:
+            # We want to smoothly transition from pos0 to pos1
+            elapsed = current_time - time0
+            t = min(1.0, elapsed / time_delta)  # Clamp to [0, 1]
+        else:
+            t = 1.0
+
+        # Linear interpolation with sub-pixel precision
+        interp_x = pos0_x + (pos1_x - pos0_x) * t
+        interp_y = pos0_y + (pos1_y - pos0_y) * t
+
+        # Apply One Euro Filter to the interpolated position for extra smoothness
+        if self.use_one_euro:
+            smoothed_x = self.filter_x(interp_x, current_time)
+            smoothed_y = self.filter_y(interp_y, current_time)
+            self.cursor_x = smoothed_x
+            self.cursor_y = smoothed_y
+        else:
+            # Simple exponential smoothing on interpolated position
+            self.cursor_x = self.cursor_x + (interp_x - self.cursor_x) * self.smooth_factor
+            self.cursor_y = self.cursor_y + (interp_y - self.cursor_y) * self.smooth_factor
+
+        # Move cursor (only convert to int at the final step)
+        pyautogui.moveTo(int(self.cursor_x), int(self.cursor_y))
     
     def _is_finger_extended(self, points, finger_id):
         finger_tips = [4, 8, 12, 16, 20]
