@@ -17,7 +17,7 @@ A hand gesture-based mouse controller for macOS that uses MediaPipe for hand tra
 
 ### Requirements
 
-- Python 3.11+
+- Python 3.11
 - macOS 10.13+
 - Camera access
 - Accessibility permissions (for mouse control)
