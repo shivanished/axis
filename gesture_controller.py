@@ -10,6 +10,75 @@ import numpy as np
 import pyautogui
 
 
+class OneEuroFilter:
+    """
+    One Euro Filter for smooth, low-latency cursor tracking.
+    Adapts smoothing based on movement speed - more smoothing when slow,
+    more responsive when fast.
+
+    Reference: http://cristal.univ-lille.fr/~casiez/1euro/
+    """
+
+    def __init__(self, min_cutoff=1.0, beta=0.007, d_cutoff=1.0):
+        """
+        Args:
+            min_cutoff: Minimum cutoff frequency (Hz). Lower = more smoothing when stationary.
+            beta: Speed coefficient. Higher = more responsive to fast movements.
+            d_cutoff: Cutoff frequency for derivative filter (Hz).
+        """
+        self.min_cutoff = min_cutoff
+        self.beta = beta
+        self.d_cutoff = d_cutoff
+
+        self.x_prev = None
+        self.dx_prev = 0.0
+        self.timestamp_prev = None
+
+    def __call__(self, x, timestamp=None):
+        """Apply the filter to a new value."""
+        if timestamp is None:
+            timestamp = time.time()
+
+        # First call - initialize
+        if self.x_prev is None:
+            self.x_prev = x
+            self.timestamp_prev = timestamp
+            return x
+
+        # Calculate time delta
+        dt = timestamp - self.timestamp_prev
+        if dt <= 0:
+            dt = 0.001  # Prevent division by zero
+
+        # Calculate velocity (derivative)
+        dx = (x - self.x_prev) / dt
+
+        # Smooth the derivative with a low-pass filter
+        dx_smoothed = self._smooth(dx, self.dx_prev, self._alpha(dt, self.d_cutoff))
+
+        # Calculate adaptive cutoff frequency based on smoothed velocity
+        cutoff = self.min_cutoff + self.beta * abs(dx_smoothed)
+
+        # Smooth the position with adaptive cutoff
+        x_smoothed = self._smooth(x, self.x_prev, self._alpha(dt, cutoff))
+
+        # Update state
+        self.x_prev = x_smoothed
+        self.dx_prev = dx_smoothed
+        self.timestamp_prev = timestamp
+
+        return x_smoothed
+
+    def _alpha(self, dt, cutoff):
+        """Calculate the smoothing factor (alpha) from cutoff frequency."""
+        tau = 1.0 / (2 * math.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def _smooth(self, current, previous, alpha):
+        """Apply exponential smoothing."""
+        return alpha * current + (1 - alpha) * previous
+
+
 class SimpleHandTracker:
     """
     Lightweight helper around MediaPipe that returns pixel-space landmarks
@@ -69,6 +138,9 @@ class GestureMouseController:
         click_ratio=0.1,
         detection_confidence=0.65,
         tracking_confidence=0.55,
+        use_one_euro=True,
+        min_cutoff=1.0,
+        beta=0.007,
     ):
         if not 0.2 <= box_scale <= 0.95:
             raise ValueError("box_scale must be inside [0.2, 0.95]")
@@ -81,6 +153,7 @@ class GestureMouseController:
         self.smooth_factor = smooth_factor
         self.hover_ratio = hover_ratio
         self.click_ratio = click_ratio
+        self.use_one_euro = use_one_euro
 
         self.detector = SimpleHandTracker(
             detection_confidence=detection_confidence,
@@ -92,6 +165,11 @@ class GestureMouseController:
         start_x, start_y = pyautogui.position()
         self.cursor_x = start_x
         self.cursor_y = start_y
+
+        # Initialize One Euro Filters for X and Y coordinates
+        if self.use_one_euro:
+            self.filter_x = OneEuroFilter(min_cutoff=min_cutoff, beta=beta)
+            self.filter_y = OneEuroFilter(min_cutoff=min_cutoff, beta=beta)
 
         self._click_latched = False
         self._drag_active = False
@@ -109,6 +187,39 @@ class GestureMouseController:
         self._wrist_movement_threshold = 15
         self._slow_scroll_amount = 2
         self._fast_scroll_amount = 6
+
+    def update_smoothing_params(self, use_one_euro=None, min_cutoff=None, beta=None):
+        """
+        Update smoothing parameters on the fly without restarting the controller.
+
+        Args:
+            use_one_euro: Whether to use One Euro Filter (if None, keep current)
+            min_cutoff: Minimum cutoff frequency for One Euro Filter (if None, keep current)
+            beta: Beta parameter for One Euro Filter (if None, keep current)
+        """
+        if use_one_euro is not None:
+            # If switching filter mode, reinitialize filters
+            if use_one_euro != self.use_one_euro:
+                self.use_one_euro = use_one_euro
+                if use_one_euro:
+                    # Initialize new filters with current position
+                    self.filter_x = OneEuroFilter(
+                        min_cutoff=min_cutoff if min_cutoff is not None else 1.0,
+                        beta=beta if beta is not None else 0.007
+                    )
+                    self.filter_y = OneEuroFilter(
+                        min_cutoff=min_cutoff if min_cutoff is not None else 1.0,
+                        beta=beta if beta is not None else 0.007
+                    )
+
+        # Update existing filter parameters
+        if self.use_one_euro and (min_cutoff is not None or beta is not None):
+            if min_cutoff is not None:
+                self.filter_x.min_cutoff = min_cutoff
+                self.filter_y.min_cutoff = min_cutoff
+            if beta is not None:
+                self.filter_x.beta = beta
+                self.filter_y.beta = beta
 
     def process_frame(self, frame, mirror=True):
         """
@@ -314,8 +425,19 @@ class GestureMouseController:
 
     def _move_cursor(self, target):
         target_x, target_y = target
-        self.cursor_x = int(self.cursor_x + (target_x - self.cursor_x) * self.smooth_factor)
-        self.cursor_y = int(self.cursor_y + (target_y - self.cursor_y) * self.smooth_factor)
+
+        if self.use_one_euro:
+            # Use One Euro Filter for adaptive smoothing
+            timestamp = time.time()
+            smoothed_x = self.filter_x(target_x, timestamp)
+            smoothed_y = self.filter_y(target_y, timestamp)
+            self.cursor_x = int(smoothed_x)
+            self.cursor_y = int(smoothed_y)
+        else:
+            # Fall back to simple exponential smoothing
+            self.cursor_x = int(self.cursor_x + (target_x - self.cursor_x) * self.smooth_factor)
+            self.cursor_y = int(self.cursor_y + (target_y - self.cursor_y) * self.smooth_factor)
+
         pyautogui.moveTo(self.cursor_x, self.cursor_y)
     
     def _is_finger_extended(self, points, finger_id):

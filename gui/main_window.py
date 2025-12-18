@@ -134,6 +134,10 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Error", f"Could not open camera {camera_index}")
                 return
             
+            # Get One Euro Filter parameters from settings
+            use_one_euro = self.settings.get("use_one_euro", True)
+            min_cutoff, beta = self.settings.get_one_euro_params()
+
             # Create controller with current settings
             self.controller = GestureMouseController(
                 box_scale=self.settings.get("box_scale", 0.65),
@@ -142,6 +146,9 @@ class MainWindow(QMainWindow):
                 click_ratio=self.settings.get("click_threshold", 0.1),
                 detection_confidence=self.settings.get("detection_confidence", 0.65),
                 tracking_confidence=self.settings.get("tracking_confidence", 0.55),
+                use_one_euro=use_one_euro,
+                min_cutoff=min_cutoff,
+                beta=beta,
             )
             
             self.running = True
@@ -199,15 +206,44 @@ class MainWindow(QMainWindow):
     
     def _show_settings(self):
         """Show settings dialog."""
+        # Save old settings before updating
+        old_settings = self.settings.get_all()
+
         dialog = SettingsDialog(self.settings, self)
         if dialog.exec():
             new_settings = dialog.get_settings()
             self.settings.update(**new_settings)
-            
-            # If running, restart with new settings
-            if self.running:
-                self._stop_control()
-                self._start_control()
+
+            # Check if only smoothing settings changed
+            smoothing_changed = (
+                new_settings.get("use_one_euro") != old_settings.get("use_one_euro") or
+                new_settings.get("one_euro_smoothness") != old_settings.get("one_euro_smoothness")
+            )
+
+            # Check if other settings changed
+            other_settings_changed = any([
+                new_settings.get(key) != old_settings.get(key)
+                for key in ["camera_index", "box_scale", "smooth_factor",
+                           "hover_threshold", "click_threshold",
+                           "detection_confidence", "tracking_confidence", "mirror"]
+            ])
+
+            # If running, update or restart as needed
+            if self.running and self.controller:
+                if smoothing_changed:
+                    # Update smoothing params on the fly
+                    use_one_euro = new_settings.get("use_one_euro", True)
+                    min_cutoff, beta = self.settings.get_one_euro_params()
+                    self.controller.update_smoothing_params(
+                        use_one_euro=use_one_euro,
+                        min_cutoff=min_cutoff,
+                        beta=beta
+                    )
+
+                if other_settings_changed:
+                    # Restart for other settings
+                    self._stop_control()
+                    self._start_control()
     
     def _show_about(self):
         """Show about dialog."""
