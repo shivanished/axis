@@ -42,6 +42,9 @@ class Settings:
             # One Euro Filter settings
             "use_one_euro": True,
             "one_euro_smoothness": 0.5,  # 0=max smoothing, 1=max responsiveness
+            # Frame interpolation settings (optional, adds lag but smoother)
+            "use_interpolation": False,  # Enable frame buffering and interpolation
+            "buffer_size": 5,  # Number of frames to buffer for interpolation (2-10)
         }
         
         if self.config_file.exists():

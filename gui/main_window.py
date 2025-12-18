@@ -137,6 +137,8 @@ class MainWindow(QMainWindow):
             # Get One Euro Filter parameters from settings
             use_one_euro = self.settings.get("use_one_euro", True)
             min_cutoff, beta = self.settings.get_one_euro_params()
+            use_interpolation = self.settings.get("use_interpolation", False)
+            buffer_size = self.settings.get("buffer_size", 5)
 
             # Create controller with current settings
             self.controller = GestureMouseController(
@@ -149,6 +151,8 @@ class MainWindow(QMainWindow):
                 use_one_euro=use_one_euro,
                 min_cutoff=min_cutoff,
                 beta=beta,
+                use_interpolation=use_interpolation,
+                buffer_size=buffer_size,
             )
             
             self.running = True
@@ -160,7 +164,7 @@ class MainWindow(QMainWindow):
             # Show overlay window
             self.overlay.show()
             self.overlay_visible = True
-            
+
             # Start timer for frame updates
             self.timer.start(33)  # ~30fps
             
@@ -217,7 +221,8 @@ class MainWindow(QMainWindow):
             # Check if only smoothing settings changed
             smoothing_changed = (
                 new_settings.get("use_one_euro") != old_settings.get("use_one_euro") or
-                new_settings.get("one_euro_smoothness") != old_settings.get("one_euro_smoothness")
+                new_settings.get("one_euro_smoothness") != old_settings.get("one_euro_smoothness") or
+                new_settings.get("use_interpolation") != old_settings.get("use_interpolation")
             )
 
             # Check if other settings changed
@@ -234,10 +239,12 @@ class MainWindow(QMainWindow):
                     # Update smoothing params on the fly
                     use_one_euro = new_settings.get("use_one_euro", True)
                     min_cutoff, beta = self.settings.get_one_euro_params()
+                    use_interpolation = new_settings.get("use_interpolation", False)
                     self.controller.update_smoothing_params(
                         use_one_euro=use_one_euro,
                         min_cutoff=min_cutoff,
-                        beta=beta
+                        beta=beta,
+                        use_interpolation=use_interpolation
                     )
 
                 if other_settings_changed:

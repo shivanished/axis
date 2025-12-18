@@ -42,3 +42,4 @@ sounddevice==0.5.2
 PySide6==6.7.0
 pynput==1.7.6
 pyinstaller==6.17.0
+OneEuroFilter==0.2.1

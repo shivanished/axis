@@ -124,6 +124,15 @@ class SettingsDialog(QDialog):
         smoothing_layout.addRow("Smoothness/Responsiveness:", smoothness_container)
         smoothing_layout.addRow("", self.smoothness_value_label)
 
+        # Frame interpolation toggle
+        self.use_interpolation = QCheckBox()
+        self.use_interpolation.setChecked(settings.get("use_interpolation", False))
+        smoothing_layout.addRow("Enable Frame Interpolation:", self.use_interpolation)
+
+        interpolation_help = QLabel("(Adds latency but creates smoother motion)")
+        interpolation_help.setStyleSheet("color: gray; font-size: 10px;")
+        smoothing_layout.addRow("", interpolation_help)
+
         smoothing_group.setLayout(smoothing_layout)
         layout.addWidget(smoothing_group)
 
@@ -163,5 +172,6 @@ class SettingsDialog(QDialog):
             "mirror": self.mirror.isChecked(),
             "use_one_euro": self.use_one_euro.isChecked(),
             "one_euro_smoothness": self.smoothness_slider.value() / 100.0,
+            "use_interpolation": self.use_interpolation.isChecked(),
         }
 
