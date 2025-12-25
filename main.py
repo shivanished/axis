@@ -76,7 +76,6 @@ def run_cli_mode(args):
 
         processed_frame, state_info = controller.process_frame(frame, mirror=True)
         
-        # Always update overlay (it's always visible)
         overlay.update_frame(processed_frame)
 
     cap.release()

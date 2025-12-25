@@ -5,11 +5,9 @@ This hook runs at runtime, not during build analysis.
 import sys
 import os
 
-# Only run at runtime, not during PyInstaller analysis
-if sys.platform == 'darwin' and not hasattr(sys, 'frozen'):
-    # This shouldn't run during PyInstaller analysis, but just in case:
-    pass
-elif sys.platform == 'darwin':
+# Runtime hooks only execute in frozen (bundled) apps
+# Check if we're running in a PyInstaller bundle
+if hasattr(sys, 'frozen') and sys.platform == 'darwin':
     # Runtime: Ensure PyAutoGUI can find its dependencies
     try:
         import pyautogui
