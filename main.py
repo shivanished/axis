@@ -9,6 +9,16 @@ from PySide6.QtWidgets import QApplication
 from settings import Settings
 from gui.main_window import MainWindow
 
+# import sys, os
+# print("sys.path =", sys.path)
+
+# try:
+#     import cv2
+#     print("cv2 loaded from:", cv2.__file__)
+# except Exception as e:
+#     print("cv2 import failed:", e)
+#     raise
+
 
 def run_cli_mode(args):
     """Run in command-line mode with overlay (legacy mode)."""
