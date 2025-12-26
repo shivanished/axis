@@ -129,6 +129,14 @@ class GestureMouseController:
         self._buffer_size = buffer_size  # Number of frames to buffer (adds latency but increases smoothness)
         self._last_interpolation_time = time.time()
 
+        # Zoom gesture state
+        self._last_zoom_time = time.time()
+        self._zoom_initial_cooldown = 0.3  # Cooldown before first zoom
+        self._zoom_repeat_delay = 0.15     # Delay between repeated zooms when held
+        self._zoom_in_active = False       # Track if zoom in is active
+        self._zoom_out_active = False      # Track if zoom out is active
+        self._zoom_pinch_ratio = 0.15      # Threshold for zoom pinches (slightly higher than click)
+
     def update_smoothing_params(self, use_one_euro=None, min_cutoff=None, beta=None, use_interpolation=None):
         """
         Update smoothing parameters on the fly without restarting the controller.
@@ -191,6 +199,8 @@ class GestureMouseController:
         else:
             self._click_latched = False
             self._hand_position_history = []
+            self._zoom_in_active = False
+            self._zoom_out_active = False
             if self._drag_active:
                 pyautogui.mouseUp()
                 self._drag_active = False
@@ -203,6 +213,7 @@ class GestureMouseController:
                 "inside_box": False,
                 "finger_gesture": None,
                 "flick_direction": None,
+                "zoom_gesture": None,
             }
 
         self._draw_guides(frame, control_box, state_info)
@@ -230,14 +241,17 @@ class GestureMouseController:
 
         finger_gesture = self._detect_finger_gesture(points)
         wrist = points[0]
-        
+
         current_time = time.time()
         self._hand_position_history.append((midpoint[0], midpoint[1], wrist[0], wrist[1], current_time))
         if len(self._hand_position_history) > self._max_history:
             self._hand_position_history.pop(0)
-        
+
         flick_direction = self._detect_flick(midpoint)
-        
+
+        # Detect zoom gestures based on thumb pinches
+        zoom_gesture = self._detect_zoom_pinches(points, bbox)
+
         wrist_movement = None
         if finger_gesture and flick_direction and len(self._hand_position_history) >= 2:
             window_size = min(5, len(self._hand_position_history))
@@ -253,6 +267,12 @@ class GestureMouseController:
             current_time = time.time()
             self._hand_position_history = [(midpoint[0], midpoint[1], wrist[0], wrist[1], current_time)]
 
+        # Perform zoom if detected (both initial and held states for continuous zoom)
+        if zoom_gesture in ("zoom-in", "zoom-in-held", "zoom-out", "zoom-out-held"):
+            # Normalize to base gesture name for perform_zoom
+            base_gesture = "zoom-in" if "zoom-in" in zoom_gesture else "zoom-out"
+            self._perform_zoom(base_gesture)
+
         left, top, right, bottom = control_box
         inside_box = left <= midpoint[0] <= right and top <= midpoint[1] <= bottom
 
@@ -266,10 +286,16 @@ class GestureMouseController:
             self._drag_start_pos = None
             self._pinch_start_pos = None
         else:
+            # Priority: click > ready > zoom > scroll > open
             if pinch_ratio < self.click_ratio:
                 state_label = "click"
             elif pinch_ratio < self.hover_ratio:
                 state_label = "ready"
+            elif zoom_gesture and zoom_gesture.startswith(("zoom-in", "zoom-out")):
+                # Use base zoom state for display (remove -held and -waiting suffixes)
+                state_label = zoom_gesture.replace("-held", "").replace("-waiting", "")
+                screen_target = None
+                self._click_latched = False
             elif finger_gesture:
                 state_label = f"scroll-{finger_gesture}"
                 screen_target = None
@@ -309,7 +335,7 @@ class GestureMouseController:
                     self._pinch_start_pos = None
             else:
                 screen_target = None
-                if state_label not in ("scroll-one", "scroll-two"):
+                if state_label not in ("scroll-one", "scroll-two", "zoom-in", "zoom-out"):
                     self._click_latched = False
                     if self._drag_active:
                         pyautogui.mouseUp()
@@ -318,7 +344,7 @@ class GestureMouseController:
                     self._pinch_start_pos = None
 
             if state_label != "click":
-                if state_label not in ("scroll-one", "scroll-two"):
+                if state_label not in ("scroll-one", "scroll-two", "zoom-in", "zoom-out"):
                     if self._drag_active:
                         pyautogui.mouseUp()
                         self._drag_active = False
@@ -351,6 +377,36 @@ class GestureMouseController:
                 cv2.putText(frame, f"TWO FINGERS - SCROLL DOWN ({flick_direction}, {speed_type})", (10, 50),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
 
+        # Visual feedback for zoom gesture
+        if zoom_gesture and zoom_gesture.startswith(("zoom-in", "zoom-out")):
+            thumb = points[4]
+
+            if zoom_gesture.startswith("zoom-in"):
+                # Thumb + middle pinch for zoom in
+                middle = points[12]
+                zoom_color = (255, 0, 255)  # Magenta for zoom in
+                zoom_text = "ZOOM IN (Thumb + Middle Pinch)"
+
+                # Highlight thumb and middle finger
+                cv2.circle(frame, thumb, 12, zoom_color, -1)
+                cv2.circle(frame, middle, 12, zoom_color, -1)
+                cv2.line(frame, thumb, middle, zoom_color, 3)
+
+            else:  # zoom-out
+                # Thumb + ring pinch for zoom out
+                ring = points[16]
+                zoom_color = (0, 255, 255)  # Cyan for zoom out
+                zoom_text = "ZOOM OUT (Thumb + Ring Pinch)"
+
+                # Highlight thumb and ring finger
+                cv2.circle(frame, thumb, 12, zoom_color, -1)
+                cv2.circle(frame, ring, 12, zoom_color, -1)
+                cv2.line(frame, thumb, ring, zoom_color, 3)
+
+            # Draw text overlay
+            cv2.putText(frame, zoom_text, (10, 80),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.9, zoom_color, 2)
+
         self._last_state = state_label
         self._last_ratio = pinch_ratio
 
@@ -362,6 +418,7 @@ class GestureMouseController:
             "finger_gesture": finger_gesture,
             "flick_direction": flick_direction,
             "wrist_movement": wrist_movement,
+            "zoom_gesture": zoom_gesture,
         }
 
     def _map_to_screen(self, midpoint, control_box):
@@ -477,6 +534,63 @@ class GestureMouseController:
             
             return tip[1] < pip[1] and tip[1] < mcp[1]
     
+    def _detect_zoom_pinches(self, points, bbox):
+        """
+        Detect zoom gestures based on specific thumb-finger pinches.
+        Returns 'zoom-in', 'zoom-out', 'zoom-in-held', 'zoom-out-held', or None.
+        Supports continuous zoom when held.
+        """
+        thumb = points[4]
+        middle = points[12]  # Middle finger for zoom in
+        ring = points[16]    # Ring finger for zoom out
+
+        hand_size = max(bbox[2] - bbox[0], bbox[3] - bbox[1], 1)
+
+        # Calculate pinch distances and ratios
+        middle_pinch_distance = math.hypot(thumb[0] - middle[0], thumb[1] - middle[1])
+        middle_pinch_ratio = middle_pinch_distance / hand_size
+
+        ring_pinch_distance = math.hypot(thumb[0] - ring[0], thumb[1] - ring[1])
+        ring_pinch_ratio = ring_pinch_distance / hand_size
+
+        current_time = time.time()
+
+        # Check for thumb + middle pinch (zoom in)
+        if middle_pinch_ratio < self._zoom_pinch_ratio:
+            if not self._zoom_in_active:
+                # First activation - use initial cooldown
+                if current_time - self._last_zoom_time >= self._zoom_initial_cooldown:
+                    self._zoom_in_active = True
+                    self._zoom_out_active = False
+                    return "zoom-in"
+            else:
+                # Already active - check repeat delay for continuous zoom
+                if current_time - self._last_zoom_time >= self._zoom_repeat_delay:
+                    return "zoom-in-held"
+                else:
+                    return "zoom-in-waiting"  # Still held but waiting for next zoom
+        else:
+            self._zoom_in_active = False
+
+        # Check for thumb + ring pinch (zoom out)
+        if ring_pinch_ratio < self._zoom_pinch_ratio:
+            if not self._zoom_out_active:
+                # First activation - use initial cooldown
+                if current_time - self._last_zoom_time >= self._zoom_initial_cooldown:
+                    self._zoom_out_active = True
+                    self._zoom_in_active = False
+                    return "zoom-out"
+            else:
+                # Already active - check repeat delay for continuous zoom
+                if current_time - self._last_zoom_time >= self._zoom_repeat_delay:
+                    return "zoom-out-held"
+                else:
+                    return "zoom-out-waiting"  # Still held but waiting for next zoom
+        else:
+            self._zoom_out_active = False
+
+        return None
+
     def _detect_finger_gesture(self, points):
         index_extended = self._is_finger_extended(points, 1)
         middle_extended = self._is_finger_extended(points, 2)
@@ -556,7 +670,7 @@ class GestureMouseController:
             return "down"
         
         return None
-    
+
     def _perform_scroll(self, gesture, flick_direction, wrist_movement):
         current_time = time.time()
         
@@ -575,6 +689,33 @@ class GestureMouseController:
         
         self._last_scroll_time = current_time
 
+    def _perform_zoom(self, zoom_direction):
+        """
+        Perform zoom in or zoom out using platform-specific commands.
+        On macOS, this uses Ctrl + scroll (works in most browsers and apps).
+        """
+        # Update last zoom time
+        self._last_zoom_time = time.time()
+
+        # Perform zoom using Ctrl + scroll wheel (more universal on macOS)
+        # Positive scroll = zoom in, negative scroll = zoom out
+        zoom_amount = 5  # Increased scroll amount for more noticeable zoom
+
+        if zoom_direction == "zoom-in":
+            # Thumb + middle pinch = zoom in
+            pyautogui.keyDown('ctrl')
+            time.sleep(0.01)  # Small delay to ensure key is registered
+            pyautogui.scroll(zoom_amount)
+            time.sleep(0.01)
+            pyautogui.keyUp('ctrl')
+        elif zoom_direction == "zoom-out":
+            # Thumb + ring pinch = zoom out
+            pyautogui.keyDown('ctrl')
+            time.sleep(0.01)
+            pyautogui.scroll(-zoom_amount)
+            time.sleep(0.01)
+            pyautogui.keyUp('ctrl')
+
     def _draw_guides(self, frame, control_box, state_info):
         left, top, right, bottom = control_box
         box_color = {
@@ -585,16 +726,23 @@ class GestureMouseController:
             "click": (0, 255, 0),
             "scroll-one": (0, 255, 255),
             "scroll-two": (255, 255, 0),
+            "zoom-in": (255, 0, 255),   # Magenta for zoom in
+            "zoom-out": (0, 255, 255),  # Cyan for zoom out
         }.get(state_info["label"], (200, 200, 200))
 
         cv2.rectangle(frame, (left, top), (right, bottom), box_color, 3)
-        
-        if state_info.get("finger_gesture") == "one":
+
+        zoom = state_info.get("zoom_gesture") or ""
+        if "zoom-in" in zoom:
+            instruction = "ZOOM IN: Thumb + Middle pinch"
+        elif "zoom-out" in zoom:
+            instruction = "ZOOM OUT: Thumb + Ring pinch"
+        elif state_info.get("finger_gesture") == "one":
             instruction = "ONE finger: Flick to scroll UP"
         elif state_info.get("finger_gesture") == "two":
             instruction = "TWO fingers: Flick to scroll DOWN"
         else:
-            instruction = "Move hand inside the box; almost pinch to steer, pinch to click"
+            instruction = "Thumb+Index: Click | Thumb+Middle: Zoom In | Thumb+Ring: Zoom Out"
         
         cv2.putText(
             frame,
@@ -616,6 +764,8 @@ class GestureMouseController:
         if state_info.get("wrist_movement") is not None:
             speed_type = "FAST" if state_info['wrist_movement'] >= self._wrist_movement_threshold else "SLOW"
             status_text += f" | wrist={state_info['wrist_movement']:.0f}px ({speed_type})"
+        if state_info.get("zoom_gesture"):
+            status_text += f" | zoom={state_info['zoom_gesture']}"
         
         cv2.putText(
             frame,
